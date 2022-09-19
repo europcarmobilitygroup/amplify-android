@@ -30,3 +30,17 @@ dependencies {
     testImplementation project(path: ':testmodels')
     testImplementation project(path: ':testutils')
 }
+
+afterEvaluate {
+    publishing {
+        publications {
+            // Creates a Maven publication called "release".
+            release(MavenPublication) {
+                from components.release
+                groupId = 'com.github.jitpack'
+                artifactId = 'aws-api-appsync-release'
+                version = '1.37.5.1'
+            }
+        }
+    }
+}

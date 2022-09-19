@@ -29,3 +29,16 @@ dependencies {
     testImplementation dependency.robolectric
     testImplementation dependency.androidx.test.core
 }
+afterEvaluate {
+    publishing {
+        publications {
+            // Creates a Maven publication called "release".
+            release(MavenPublication) {
+                from components.release
+                groupId = 'com.github.jitpack'
+                artifactId = 'aws-auth-cognito-release'
+                version = '1.37.5.1'
+            }
+        }
+    }
+}

@@ -41,3 +41,16 @@ ktlint {
     android.set(true)
 }
 
+afterEvaluate {
+    publishing {
+        publications {
+            // Creates a Maven publication called "release".
+            release(MavenPublication) {
+                from components.release
+                groupId = 'com.github.jitpack'
+                artifactId = 'aws-storage-s3-release'
+                version = '1.37.5.1'
+            }
+        }
+    }
+}

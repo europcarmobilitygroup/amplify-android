@@ -66,4 +66,16 @@ afterEvaluate {
     it.tasks.withType(JavaCompile) {
         options.compilerArgs << '-Xlint:-classfile'
     }
+
+    publishing {
+        publications {
+            // Creates a Maven publication called "release".
+            release(MavenPublication) {
+                from components.release
+                groupId = 'com.github.jitpack'
+                artifactId = 'core-release'
+                version = '1.37.5.1'
+            }
+        }
+    }
 }

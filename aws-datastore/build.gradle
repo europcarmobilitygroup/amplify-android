@@ -52,3 +52,16 @@ dependencies {
     androidTestImplementation dependency.oauth2
 }
 
+afterEvaluate {
+    publishing {
+        publications {
+            // Creates a Maven publication called "release".
+            release(MavenPublication) {
+                from components.release
+                groupId = 'com.github.jitpack'
+                artifactId = 'aws-datastore-release'
+                version = '1.37.5.1'
+            }
+        }
+    }
+}
