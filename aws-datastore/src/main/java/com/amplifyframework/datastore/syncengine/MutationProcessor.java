@@ -58,6 +58,7 @@ final class MutationProcessor {
     private final AppSync appSync;
     private final ConflictResolver conflictResolver;
     private final CompositeDisposable ongoingOperationsDisposable;
+    private final Consumer<Throwable> onFailure;
 
     private MutationProcessor(Builder builder) {
         this.merger = Objects.requireNonNull(builder.merger);
@@ -67,6 +68,7 @@ final class MutationProcessor {
         this.appSync = Objects.requireNonNull(builder.appSync);
         this.conflictResolver = Objects.requireNonNull(builder.conflictResolver);
         this.ongoingOperationsDisposable = new CompositeDisposable();
+        this.onFailure = builder.onFailure;
     }
 
     /**
@@ -101,7 +103,10 @@ final class MutationProcessor {
             .flatMapCompletable(event -> drainMutationOutbox())
             .subscribe(
                 () -> LOG.warn("Observation of mutation outbox was completed."),
-                error -> LOG.warn("Error ended observation of mutation outbox: ", error)
+                error -> {
+                    LOG.warn("Error ended observation of mutation outbox: ", error);
+                    onFailure.accept(error);
+                }
             )
         );
     }
@@ -173,9 +178,7 @@ final class MutationProcessor {
                 return Completable.error(error);
             })
             // Finally, catch all.
-            .doOnError(error -> {
-                LOG.warn("Failed to publish a local change = " + mutationOutboxItem, error);
-            });
+            .doOnError(error -> LOG.warn("Failed to publish a local change = " + mutationOutboxItem, error));
     }
 
     private <T extends Model> ModelWithMetadata<? extends Model> ensureModelHasSchema(
@@ -394,6 +397,7 @@ final class MutationProcessor {
             BuilderSteps.MutationOutboxStep,
             BuilderSteps.AppSyncStep,
             BuilderSteps.ConflictResolverStep,
+            BuilderSteps.OnFailureStep,
             BuilderSteps.BuildStep {
         private Merger merger;
         private VersionRepository versionRepository;
@@ -401,6 +405,7 @@ final class MutationProcessor {
         private MutationOutbox mutationOutbox;
         private AppSync appSync;
         private ConflictResolver conflictResolver;
+        private Consumer<Throwable> onFailure;
 
         @NonNull
         @Override
@@ -439,8 +444,15 @@ final class MutationProcessor {
 
         @NonNull
         @Override
-        public BuilderSteps.BuildStep conflictResolver(@NonNull ConflictResolver conflictResolver) {
-            this.conflictResolver = Objects.requireNonNull(conflictResolver);
+        public BuilderSteps.OnFailureStep conflictResolver(@NonNull ConflictResolver conflictResolver) {
+            Builder.this.conflictResolver = Objects.requireNonNull(conflictResolver);
+            return Builder.this;
+        }
+
+        @NonNull
+        @Override
+        public BuilderSteps.BuildStep onFailure(@NonNull Consumer<Throwable> onFailure) {
+            Builder.this.onFailure = Objects.requireNonNull(onFailure);
             return Builder.this;
         }
 
@@ -479,7 +491,12 @@ final class MutationProcessor {
 
         interface ConflictResolverStep {
             @NonNull
-            BuildStep conflictResolver(@NonNull ConflictResolver conflictResolver);
+            OnFailureStep conflictResolver(@NonNull ConflictResolver conflictResolver);
+        }
+
+        interface OnFailureStep {
+            @NonNull
+            BuildStep onFailure(@NonNull Consumer<Throwable> onFailure);
         }
 
         interface BuildStep {
