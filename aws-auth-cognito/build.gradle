@@ -16,6 +16,7 @@
 apply plugin: 'com.android.library'
 apply from: rootProject.file("configuration/publishing.gradle")
 apply from: rootProject.file("configuration/checkstyle.gradle")
+apply plugin: 'maven-publish'
 
 dependencies {
     implementation project(path: ':core')
@@ -35,9 +36,9 @@ afterEvaluate {
             // Creates a Maven publication called "release".
             release(MavenPublication) {
                 from components.release
-                groupId = 'com.github.jitpack'
-                artifactId = 'aws-auth-cognito-release'
-                version = '1.37.5.1'
+                groupId = 'com.github.shantanu-saha-europcar.amplify-android'
+                artifactId = 'aws-auth-cognito'
+                version = '1.36.5.3'
             }
         }
     }

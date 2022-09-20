@@ -64,15 +64,4 @@ dependencies {
 
 afterEvaluate {
     it.android.kotlinOptions.jvmTarget = JavaVersion.VERSION_1_8.toString()
-    publishing {
-        publications {
-            // Creates a Maven publication called "release".
-            release(MavenPublication) {
-                from components.release
-                groupId = 'com.github.jitpack'
-                artifactId = 'maplibre-adapter-release'
-                version = '1.37.5.1'
-            }
-        }
-    }
 }
