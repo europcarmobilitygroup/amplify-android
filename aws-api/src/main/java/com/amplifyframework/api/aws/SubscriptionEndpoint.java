@@ -63,8 +63,9 @@ final class SubscriptionEndpoint {
     private static final Logger LOG = Amplify.Logging.forNamespace("amplify:aws-api");
     private static final int CONNECTION_ACKNOWLEDGEMENT_TIMEOUT = 30 /* seconds */;
     private static final int NORMAL_CLOSURE_STATUS = 1000;
-    private static final int PING_TIMEOUT_SEC = 45; /* seconds */
-    private static final int KEEP_ALIVE_MIN = 5; /* minutes */
+    private static final int CONNECTION_TIMEOUT_SEC = 15;
+    private static final int PING_TIMEOUT_SEC = CONNECTION_TIMEOUT_SEC - 5; /* seconds */
+    private static final int KEEP_ALIVE_SEC = 1; /* seconds */
     private static final int MAX_IDLE_CONNECTION = 0;
     private static final String UNAUTHORIZED_EXCEPTION = "UnauthorizedException";
 
@@ -92,10 +93,11 @@ final class SubscriptionEndpoint {
         this.okHttpClient = new OkHttpClient.Builder()
                 .addNetworkInterceptor(UserAgentInterceptor.using(UserAgent::string))
                 .retryOnConnectionFailure(true)
+                .connectTimeout(CONNECTION_TIMEOUT_SEC, TimeUnit.SECONDS)
                 /* workaround for okhttp client's dead connection pool bug
                 * https://github.com/square/okhttp/issues/3146
                 * */
-                .connectionPool(new ConnectionPool(MAX_IDLE_CONNECTION, KEEP_ALIVE_MIN, TimeUnit.MINUTES))
+                .connectionPool(new ConnectionPool(MAX_IDLE_CONNECTION, KEEP_ALIVE_SEC, TimeUnit.SECONDS))
                 /*
                 * To close the connection when internet is not available
                 * */
@@ -150,6 +152,7 @@ final class SubscriptionEndpoint {
         // Every request waits here for the connection to be ready.
         Connection connection = webSocketListener.waitForConnectionReady();
         if (connection.hasFailure()) {
+            webSocket.cancel();
             // If the latch didn't count all the way down
             if (pendingSubscriptionIds.remove(subscriptionId)) {
                 // The subscription was pending, so we need to emit an error.
@@ -195,6 +198,9 @@ final class SubscriptionEndpoint {
         if (subscription.awaitSubscriptionReady()) {
             pendingSubscriptionIds.remove(subscriptionId);
             onSubscriptionStarted.accept(subscriptionId);
+        }
+        else{
+            webSocket.cancel();
         }
     }
 
