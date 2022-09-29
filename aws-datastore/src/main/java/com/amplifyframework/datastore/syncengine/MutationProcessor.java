@@ -24,9 +24,11 @@ import com.amplifyframework.core.model.Model;
 import com.amplifyframework.core.model.ModelSchema;
 import com.amplifyframework.core.model.SchemaRegistry;
 import com.amplifyframework.core.model.SerializedModel;
+import com.amplifyframework.core.model.temporal.Temporal;
 import com.amplifyframework.datastore.DataStoreException;
 import com.amplifyframework.datastore.appsync.AppSync;
 import com.amplifyframework.datastore.appsync.AppSyncConflictUnhandledError;
+import com.amplifyframework.datastore.appsync.ModelMetadata;
 import com.amplifyframework.datastore.appsync.ModelWithMetadata;
 import com.amplifyframework.datastore.events.OutboxStatusEvent;
 import com.amplifyframework.hub.HubChannel;
@@ -173,6 +175,18 @@ final class MutationProcessor {
                     DataStoreException.GraphQLResponseException appSyncError =
                         (DataStoreException.GraphQLResponseException) error;
                     return mutationOutbox.remove(mutationOutboxItem.getMutationId())
+                        .andThen(
+                            Completable.defer(() -> {
+                                if (mutationOutboxItem.getMutationType() == PendingMutation.Type.CREATE)
+                                    return merger.merge(new ModelWithMetadata<>(mutationOutboxItem.getMutatedItem(), new ModelMetadata(
+                                            mutationOutboxItem.getMutatedItem().getId(),
+                                            false,
+                                            1,
+                                            new Temporal.Timestamp()
+                                    )));
+                                else return Completable.complete();
+                            })
+                        )
                         .doOnComplete(() -> announceMutationFailed(mutationOutboxItem, appSyncError));
                 }
                 return Completable.error(error);
