@@ -370,19 +370,19 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull QueryPredicate predicate,
             @NonNull Consumer<DataStoreItemChange<T>> onItemSaved,
             @NonNull Consumer<DataStoreException> onFailureToSave) {
-        start(() -> sqliteStorageAdapter.save(
-            item,
-            StorageItemChange.Initiator.DATA_STORE_API,
-            predicate,
-            itemSave -> {
-                try {
-                    onItemSaved.accept(ItemChangeMapper.map(itemSave));
-                } catch (DataStoreException dataStoreException) {
-                    onFailureToSave.accept(dataStoreException);
-                }
-            },
-            onFailureToSave
-        ), onFailureToSave);
+        sqliteStorageAdapter.save(
+                item,
+                StorageItemChange.Initiator.DATA_STORE_API,
+                predicate,
+                itemSave -> {
+                    try {
+                        onItemSaved.accept(ItemChangeMapper.map(itemSave));
+                    } catch (DataStoreException dataStoreException) {
+                        onFailureToSave.accept(dataStoreException);
+                    }
+                },
+                onFailureToSave
+        );
     }
 
     /**
@@ -405,19 +405,19 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull QueryPredicate predicate,
             @NonNull Consumer<DataStoreItemChange<T>> onItemDeleted,
             @NonNull Consumer<DataStoreException> onFailureToDelete) {
-        start(() -> sqliteStorageAdapter.delete(
-            item,
-            StorageItemChange.Initiator.DATA_STORE_API,
-            predicate,
-            itemDeletion -> {
-                try {
-                    onItemDeleted.accept(ItemChangeMapper.map(itemDeletion));
-                } catch (DataStoreException dataStoreException) {
-                    onFailureToDelete.accept(dataStoreException);
-                }
-            },
-            onFailureToDelete
-        ), onFailureToDelete);
+        sqliteStorageAdapter.delete(
+                item,
+                StorageItemChange.Initiator.DATA_STORE_API,
+                predicate,
+                itemDeletion -> {
+                    try {
+                        onItemDeleted.accept(ItemChangeMapper.map(itemDeletion));
+                    } catch (DataStoreException dataStoreException) {
+                        onFailureToDelete.accept(dataStoreException);
+                    }
+                },
+                onFailureToDelete
+        );
     }
 
     @Override
@@ -426,13 +426,13 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull QueryPredicate predicate,
             @NonNull Action onItemsDeleted,
             @NonNull Consumer<DataStoreException> onFailureToDelete) {
-        start(() -> sqliteStorageAdapter.delete(
+        sqliteStorageAdapter.delete(
                 itemClass,
                 StorageItemChange.Initiator.DATA_STORE_API,
                 predicate,
                 onItemsDeleted,
                 onFailureToDelete
-        ), onFailureToDelete);
+        );
     }
 
     /**
@@ -443,8 +443,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull Class<T> itemClass,
             @NonNull Consumer<Iterator<T>> onQueryResults,
             @NonNull Consumer<DataStoreException> onQueryFailure) {
-        start(() ->
-            sqliteStorageAdapter.query(itemClass, Where.matchesAll(), onQueryResults, onQueryFailure), onQueryFailure);
+        sqliteStorageAdapter.query(itemClass, Where.matchesAll(), onQueryResults, onQueryFailure);
     }
 
     /**
@@ -461,7 +460,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull QueryOptions options,
             @NonNull Consumer<Iterator<? extends Model>> onQueryResults,
             @NonNull Consumer<DataStoreException> onQueryFailure) {
-        start(() -> sqliteStorageAdapter.query(modelName, options, onQueryResults, onQueryFailure), onQueryFailure);
+        sqliteStorageAdapter.query(modelName, options, onQueryResults, onQueryFailure);
     }
 
     /**
@@ -482,7 +481,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull QueryOptions options,
             @NonNull Consumer<Iterator<T>> onQueryResults,
             @NonNull Consumer<DataStoreException> onQueryFailure) {
-        start(() -> sqliteStorageAdapter.query(itemClass, options, onQueryResults, onQueryFailure), onQueryFailure);
+        sqliteStorageAdapter.query(itemClass, options, onQueryResults, onQueryFailure);
     }
 
     @Override
