@@ -16,14 +16,19 @@ public class MigrationCommands {
         this.migrationList = migrationList;
     }
     public void apply(SQLiteDatabase database, int oldVersion, int newVersion){
-        LOGGER.warn("applying database migration old version " + oldVersion + " new version " + newVersion);
-        database.beginTransaction();
-        for(Migration migration : migrationList){
-            if(migration.fromVersion >= oldVersion && migration.toVersion <= newVersion){
-                migration.apply(database);
+        LOGGER.debug("applying database migration old version " + oldVersion + " new version " + newVersion);
+        try{
+            database.beginTransaction();
+            for(Migration migration : migrationList){
+                if(migration.fromVersion >= oldVersion && migration.toVersion <= newVersion){
+                    migration.apply(database);
+                }
             }
+        }catch (Exception ex){
+            LOGGER.error("exception during migration", ex);
+        }finally {
+            database.setTransactionSuccessful();
+            database.endTransaction();
         }
-        database.setTransactionSuccessful();
-        database.endTransaction();
     }
 }
