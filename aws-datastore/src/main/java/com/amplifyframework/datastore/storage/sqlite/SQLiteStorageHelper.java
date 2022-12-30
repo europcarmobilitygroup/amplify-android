@@ -44,14 +44,19 @@ final class SQLiteStorageHelper extends SQLiteOpenHelper implements ModelUpdateS
     // Contains all create table and create index commands.
     private final CreateSqlCommands createSqlCommands;
 
+    // Contains all migration commands
+    private final MigrationCommands migrationCommands;
+
     private SQLiteStorageHelper(@NonNull Context context,
                                 @NonNull String databaseName,
                                 int databaseVersion,
-                                @NonNull CreateSqlCommands createSqlCommands) {
+                                @NonNull CreateSqlCommands createSqlCommands,
+                                @NonNull MigrationCommands migrationCommands) {
         // Passing null to CursorFactory which is used to create cursor objects
         // as there is no need for a CursorFactory so far.
         super(context, databaseName, null, databaseVersion);
         this.createSqlCommands = createSqlCommands;
+        this.migrationCommands = migrationCommands;
     }
 
     /**
@@ -66,8 +71,9 @@ final class SQLiteStorageHelper extends SQLiteOpenHelper implements ModelUpdateS
             @NonNull Context context,
             @NonNull String databaseName,
             int databaseVersion,
-            @NonNull CreateSqlCommands createSqlCommands) {
-        return new SQLiteStorageHelper(context, databaseName, databaseVersion, createSqlCommands);
+            @NonNull CreateSqlCommands createSqlCommands,
+            @NonNull MigrationCommands migrationCommands) {
+        return new SQLiteStorageHelper(context, databaseName, databaseVersion, createSqlCommands, migrationCommands);
     }
 
     /**
@@ -126,23 +132,7 @@ final class SQLiteStorageHelper extends SQLiteOpenHelper implements ModelUpdateS
                                        int oldVersion,
                                        int newVersion) {
         if (oldVersion != newVersion) {
-            // Loop all the tables in the set and drop them if they exist
-            // and re-create all the tables.
-            sqliteDatabase.beginTransaction();
-            try {
-                for (final SqlCommand sqlCommand : createSqlCommands.getCreateTableCommands()) {
-                    if (!Empty.check(sqlCommand.tableName())) {
-                        sqliteDatabase.execSQL("drop table if exists " +
-                                Wrap.inBackticks(sqlCommand.tableName()));
-                    }
-                }
-                sqliteDatabase.setTransactionSuccessful();
-            } finally {
-                sqliteDatabase.endTransaction();
-            }
-
-            // After drop all exist tables, create all tables again.
-            onCreate(sqliteDatabase);
+            migrationCommands.apply(sqliteDatabase, oldVersion, newVersion);
         }
     }
 
