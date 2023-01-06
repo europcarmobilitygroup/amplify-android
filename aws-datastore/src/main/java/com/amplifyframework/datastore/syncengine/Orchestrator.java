@@ -262,8 +262,8 @@ public final class Orchestrator {
         try {
             mutationOutbox.load()
                 .andThen(Completable.create(emitter -> {
-                    storageObserver.startObservingStorageChanges(emitter::onComplete);
-                    LOG.info("Setting currentState to LOCAL_ONLY");
+                    storageObserver.startObservingStorageChanges(emitter::onComplete, this::stop);
+                    LOG.info("Setting currentState from " + currentState.get() + " to LOCAL_ONLY");
                     currentState.set(State.LOCAL_ONLY);
                 })).blockingAwait();
         } catch (Throwable throwable) {
@@ -279,7 +279,7 @@ public final class Orchestrator {
     private void stopObservingStorageChanges() {
         LOG.info("Stopping observation of local storage changes.");
         storageObserver.stopObservingStorageChanges();
-        LOG.info("Setting currentState to STOPPED");
+        LOG.info("Setting currentState from " + currentState.get() + " to STOPPED");
         currentState.set(State.STOPPED);
         publishNetworkStatusEvent(false);
     }
@@ -288,7 +288,7 @@ public final class Orchestrator {
      * Start syncing models to and from a remote API.
      */
     private void startApiSync() {
-        LOG.info("Setting currentState to SYNC_VIA_API");
+        LOG.info("Setting currentState from " + currentState.get() + " to SYNC_VIA_API");
         if(currentState.get() == State.SYNC_VIA_API) return;
         currentState.set(State.SYNC_VIA_API);
         disposables.add(
@@ -382,11 +382,21 @@ public final class Orchestrator {
      * Stop all model synchronization with the remote API.
      */
     private synchronized void stopApiSync() {
-        LOG.info("Setting currentState to LOCAL_ONLY");
-        currentState.set(State.LOCAL_ONLY);
+        if(currentState.get() != State.STOPPED) {
+            LOG.info("Setting currentState from " + currentState.get() + " to LOCAL_ONLY");
+            currentState.set(State.LOCAL_ONLY);
+        }
         disposables.clear();
         subscriptionProcessor.stopAllSubscriptionActivity();
         mutationProcessor.stopDrainingMutationOutbox();
+    }
+
+    /**
+     *
+     * @return is Orchestrator in stopped state
+     */
+    public boolean isStopped(){
+        return currentState.get() == State.STOPPED;
     }
 
     /**

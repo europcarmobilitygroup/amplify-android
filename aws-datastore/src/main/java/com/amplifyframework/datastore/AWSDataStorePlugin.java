@@ -311,6 +311,18 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
     }
 
     /**
+    * if Orchestrator is in stopped mode then start the start it before any database operations
+     * Orchestrator will start storage observer for app sync.
+     * Don't call start directly on every transaction to avoid unnecessary network call specially in offline mode
+     */
+    private void checkAndStart(@NonNull Action onComplete, @NonNull Consumer<DataStoreException> onError){
+        if(orchestrator.isStopped()){
+            start(onComplete, onError);
+        }
+        else onComplete.call();
+    }
+
+    /**
      * {@inheritDoc}
      */
     @Override
@@ -377,7 +389,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull QueryPredicate predicate,
             @NonNull Consumer<DataStoreItemChange<T>> onItemSaved,
             @NonNull Consumer<DataStoreException> onFailureToSave) {
-        sqliteStorageAdapter.save(
+        checkAndStart(()-> sqliteStorageAdapter.save(
                 item,
                 StorageItemChange.Initiator.DATA_STORE_API,
                 predicate,
@@ -389,7 +401,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
                     }
                 },
                 onFailureToSave
-        );
+        ), onFailureToSave);
     }
 
     /**
@@ -412,7 +424,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull QueryPredicate predicate,
             @NonNull Consumer<DataStoreItemChange<T>> onItemDeleted,
             @NonNull Consumer<DataStoreException> onFailureToDelete) {
-        sqliteStorageAdapter.delete(
+        checkAndStart(()-> sqliteStorageAdapter.delete(
                 item,
                 StorageItemChange.Initiator.DATA_STORE_API,
                 predicate,
@@ -424,7 +436,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
                     }
                 },
                 onFailureToDelete
-        );
+        ), onFailureToDelete);
     }
 
     @Override
@@ -433,13 +445,13 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull QueryPredicate predicate,
             @NonNull Action onItemsDeleted,
             @NonNull Consumer<DataStoreException> onFailureToDelete) {
-        sqliteStorageAdapter.delete(
+        checkAndStart(()-> sqliteStorageAdapter.delete(
                 itemClass,
                 StorageItemChange.Initiator.DATA_STORE_API,
                 predicate,
                 onItemsDeleted,
                 onFailureToDelete
-        );
+        ), onFailureToDelete);
     }
 
     /**
@@ -450,7 +462,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull Class<T> itemClass,
             @NonNull Consumer<Iterator<T>> onQueryResults,
             @NonNull Consumer<DataStoreException> onQueryFailure) {
-        sqliteStorageAdapter.query(itemClass, Where.matchesAll(), onQueryResults, onQueryFailure);
+        checkAndStart(()-> sqliteStorageAdapter.query(itemClass, Where.matchesAll(), onQueryResults, onQueryFailure), onQueryFailure);
     }
 
     /**
@@ -467,7 +479,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull QueryOptions options,
             @NonNull Consumer<Iterator<? extends Model>> onQueryResults,
             @NonNull Consumer<DataStoreException> onQueryFailure) {
-        sqliteStorageAdapter.query(modelName, options, onQueryResults, onQueryFailure);
+        checkAndStart(()-> sqliteStorageAdapter.query(modelName, options, onQueryResults, onQueryFailure), onQueryFailure);
     }
 
     /**
@@ -488,7 +500,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull QueryOptions options,
             @NonNull Consumer<Iterator<T>> onQueryResults,
             @NonNull Consumer<DataStoreException> onQueryFailure) {
-        sqliteStorageAdapter.query(itemClass, options, onQueryResults, onQueryFailure);
+        checkAndStart(()-> sqliteStorageAdapter.query(itemClass, options, onQueryResults, onQueryFailure), onQueryFailure);
     }
 
     @Override
@@ -497,7 +509,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull Consumer<DataStoreItemChange<? extends Model>> onDataStoreItemChange,
             @NonNull Consumer<DataStoreException> onObservationFailure,
             @NonNull Action onObservationCompleted) {
-        start(() -> onObservationStarted.accept(sqliteStorageAdapter.observe(
+        checkAndStart(() -> onObservationStarted.accept(sqliteStorageAdapter.observe(
             itemChange -> {
                 try {
                     onDataStoreItemChange.accept(ItemChangeMapper.map(itemChange));
@@ -521,7 +533,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
         Objects.requireNonNull(onObservationStarted);
         Objects.requireNonNull(onObservationError);
         Objects.requireNonNull(onObservationComplete);
-        start(() -> sqliteStorageAdapter.observeQuery(itemClass,
+        checkAndStart(() -> sqliteStorageAdapter.observeQuery(itemClass,
                                             options,
                                             onObservationStarted,
                                             onQuerySnapshot,
@@ -536,7 +548,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull Consumer<DataStoreItemChange<T>> onDataStoreItemChange,
             @NonNull Consumer<DataStoreException> onObservationFailure,
             @NonNull Action onObservationCompleted) {
-        start(() -> onObservationStarted.accept(sqliteStorageAdapter.observe(
+        checkAndStart(() -> onObservationStarted.accept(sqliteStorageAdapter.observe(
             itemChange -> {
                 try {
                     if (itemChange.modelSchema().getName().equals(itemClass.getSimpleName())) {
@@ -569,7 +581,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull Consumer<DataStoreItemChange<? extends Model>> onDataStoreItemChange,
             @NonNull Consumer<DataStoreException> onObservationFailure,
             @NonNull Action onObservationCompleted) {
-        start(() -> onObservationStarted.accept(sqliteStorageAdapter.observe(
+        checkAndStart(() -> onObservationStarted.accept(sqliteStorageAdapter.observe(
             itemChange -> {
                 try {
                     if (itemChange.modelSchema().getModelClass().equals(SerializedModel.class)) {
@@ -597,7 +609,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull Consumer<DataStoreItemChange<T>> onDataStoreItemChange,
             @NonNull Consumer<DataStoreException> onObservationFailure,
             @NonNull Action onObservationCompleted) {
-        start(() -> onObservationStarted.accept(sqliteStorageAdapter.observe(
+        checkAndStart(() -> onObservationStarted.accept(sqliteStorageAdapter.observe(
             itemChange -> {
                 try {
                     if (itemChange.modelSchema().getName().equals(itemClass.getSimpleName()) &&
@@ -623,7 +635,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull Consumer<DataStoreItemChange<T>> onDataStoreItemChange,
             @NonNull Consumer<DataStoreException> onObservationFailure,
             @NonNull Action onObservationCompleted) {
-        start(() -> onObservationStarted.accept(sqliteStorageAdapter.observe(
+        checkAndStart(() -> onObservationStarted.accept(sqliteStorageAdapter.observe(
             itemChange -> {
                 try {
                     if (itemChange.modelSchema().getName().equals(itemClass.getSimpleName()) &&
