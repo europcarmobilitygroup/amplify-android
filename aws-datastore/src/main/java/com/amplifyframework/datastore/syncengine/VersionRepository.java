@@ -87,7 +87,7 @@ final class VersionRepository {
         // There should be only one metadata for the model....
         if (results.size() != 1) {
             throw new DataStoreException(
-                "Wanted 1 metadata for item with id = " + model.getId() + ", but had " + results.size() + ".",
+                "Wanted 1 metadata for item with id = " + model.getId() + " for model = " + model.getModelName() + " , but had " + results.size() + ".",
                 "This is likely a bug. please report to AWS."
             );
         }
