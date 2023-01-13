@@ -262,7 +262,7 @@ public final class Orchestrator {
         try {
             mutationOutbox.load()
                 .andThen(Completable.create(emitter -> {
-                    storageObserver.startObservingStorageChanges(emitter::onComplete, this::stop);
+                    storageObserver.startObservingStorageChanges(emitter::onComplete, () -> stop().subscribe());
                     LOG.info("Setting currentState from " + currentState.get() + " to LOCAL_ONLY");
                     currentState.set(State.LOCAL_ONLY);
                 })).blockingAwait();

@@ -78,7 +78,7 @@ final class StorageObserver {
                     onStopped.call();
                 },
                 error -> {
-                    LOG.warn("Storage adapter subscription ended in error", error);
+                    LOG.error("Storage adapter subscription ended in error", error);
                     onStopped.call();
                 }
             )
