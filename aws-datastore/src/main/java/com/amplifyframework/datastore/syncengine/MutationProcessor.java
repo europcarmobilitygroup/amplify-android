@@ -175,18 +175,20 @@ final class MutationProcessor {
                     DataStoreException.GraphQLResponseException appSyncError =
                         (DataStoreException.GraphQLResponseException) error;
                     return mutationOutbox.remove(mutationOutboxItem.getMutationId())
-                        .andThen(
-                            Completable.defer(() -> {
-                                if (mutationOutboxItem.getMutationType() == PendingMutation.Type.CREATE)
+                            .andThen(versionRepository.findModelVersion(mutationOutboxItem.getMutatedItem()))
+                            .onErrorReturnItem(-1)
+                            .flatMapCompletable(version -> Completable.defer(() -> {
+                                if (version == -1 && mutationOutboxItem.getMutationType() == PendingMutation.Type.CREATE) {
+                                    LOG.warn("Item available in server but metadata isn't available locally", new IllegalStateException("Item available in server but metadata isn't available locally, model " + mutationOutboxItem.getMutatedItem().getModelName() + ", id " + mutationOutboxItem.getMutatedItem().getId()));
                                     return merger.merge(new ModelWithMetadata<>(mutationOutboxItem.getMutatedItem(), new ModelMetadata(
                                             mutationOutboxItem.getMutatedItem().getId(),
                                             false,
                                             1,
                                             new Temporal.Timestamp()
                                     )));
+                                }
                                 else return Completable.complete();
-                            })
-                        )
+                            }))
                         .doOnComplete(() -> announceMutationFailed(mutationOutboxItem, appSyncError));
                 }
                 return Completable.error(error);
@@ -294,12 +296,20 @@ final class MutationProcessor {
     private <T extends Model> Single<ModelWithMetadata<T>> update(PendingMutation<T> mutation) {
         final T updatedItem = mutation.getMutatedItem();
         final ModelSchema updatedItemSchema =
-            this.schemaRegistry.getModelSchemaForModelClass(updatedItem.getModelName());
-        return versionRepository.findModelVersion(updatedItem).flatMap(version ->
-            publishWithStrategy(mutation, (model, onSuccess, onError) ->
-                appSync.update(model, updatedItemSchema, version, mutation.getPredicate(), onSuccess, onError)
-            )
-        );
+                this.schemaRegistry.getModelSchemaForModelClass(updatedItem.getModelName());
+        return versionRepository.findModelVersion(updatedItem)
+                .onErrorReturnItem(-1)
+                .flatMap(version ->
+                        publishWithStrategy(mutation, (model, onSuccess, onError) -> {
+                                    if (version == -1) { //item version isn't available for a past error. That means item is not available in server as well. So create instead of update
+                                        appSync.create(model, updatedItemSchema, onSuccess, onError);
+                                        LOG.warn("Item version isn't available for update mutation", new IllegalStateException("Item version isn't available for update mutation, model " + updatedItem.getModelName() + ", id " + updatedItem.getId()));
+                                    } else {
+                                        appSync.update(model, updatedItemSchema, version, mutation.getPredicate(), onSuccess, onError);
+                                    }
+                                }
+                        )
+                );
     }
 
     // For an item in the outbox, dispatch a create mutation
@@ -315,14 +325,18 @@ final class MutationProcessor {
     private <T extends Model> Single<ModelWithMetadata<T>> delete(PendingMutation<T> mutation) {
         final T deletedItem = mutation.getMutatedItem();
         final ModelSchema deletedItemSchema =
-            this.schemaRegistry.getModelSchemaForModelClass(deletedItem.getModelName());
-        return versionRepository.findModelVersion(deletedItem).flatMap(version ->
-            publishWithStrategy(mutation, (model, onSuccess, onError) ->
-                appSync.delete(
-                    deletedItem, deletedItemSchema, version, mutation.getPredicate(), onSuccess, onError
-                )
-            )
-        );
+                this.schemaRegistry.getModelSchemaForModelClass(deletedItem.getModelName());
+        return versionRepository.findModelVersion(deletedItem)
+                .onErrorReturnItem(-1)
+                .flatMap(version ->
+                        publishWithStrategy(mutation, (model, onSuccess, onError) -> {
+                                    if (version != -1)
+                                        appSync.delete(
+                                                deletedItem, deletedItemSchema, version, mutation.getPredicate(), onSuccess, onError
+                                        );
+                                }
+                        )
+                );
     }
 
     /**
