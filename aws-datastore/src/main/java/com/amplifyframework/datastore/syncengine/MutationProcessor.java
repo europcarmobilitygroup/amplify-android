@@ -25,10 +25,12 @@ import com.amplifyframework.core.model.Model;
 import com.amplifyframework.core.model.ModelSchema;
 import com.amplifyframework.core.model.SchemaRegistry;
 import com.amplifyframework.core.model.SerializedModel;
+import com.amplifyframework.core.model.temporal.Temporal;
 import com.amplifyframework.datastore.DataStoreConfigurationProvider;
 import com.amplifyframework.datastore.DataStoreException;
 import com.amplifyframework.datastore.appsync.AppSync;
 import com.amplifyframework.datastore.appsync.AppSyncConflictUnhandledError;
+import com.amplifyframework.datastore.appsync.ModelMetadata;
 import com.amplifyframework.datastore.appsync.ModelWithMetadata;
 import com.amplifyframework.datastore.events.OutboxStatusEvent;
 import com.amplifyframework.hub.HubChannel;
@@ -61,6 +63,7 @@ final class MutationProcessor {
     private final DataStoreConfigurationProvider dataStoreConfiguration;
     private final ConflictResolver conflictResolver;
     private final CompositeDisposable ongoingOperationsDisposable;
+    private final Consumer<Throwable> onFailure;
     private final RetryHandler retryHandler;
 
     private MutationProcessor(Builder builder) {
@@ -73,6 +76,7 @@ final class MutationProcessor {
         this.conflictResolver = new ConflictResolver(this.dataStoreConfiguration, this.appSync);
         this.retryHandler = Objects.requireNonNull(builder.retryHandler);
         this.ongoingOperationsDisposable = new CompositeDisposable();
+        this.onFailure = builder.onFailure;
     }
 
     /**
@@ -107,7 +111,10 @@ final class MutationProcessor {
             .flatMapCompletable(event -> drainMutationOutbox())
             .subscribe(
                 () -> LOG.warn("Observation of mutation outbox was completed."),
-                error -> LOG.error("Error ended observation of mutation outbox: ", error)
+                error -> {
+                    LOG.warn("Error ended observation of mutation outbox: ", error);
+                    onFailure.accept(error);
+                }
             )
         );
     }
@@ -163,13 +170,30 @@ final class MutationProcessor {
             // If an error happens, it has to be announced (via Hub and the error handler) and the mutation removed from
             // the outbox.
             .onErrorResumeNext(error -> {
-                return mutationOutbox.remove(mutationOutboxItem.getMutationId())
-                    .doOnComplete(() -> announceMutationFailed(mutationOutboxItem, error));
+                if (error instanceof DataStoreException.GraphQLResponseException) {
+                    DataStoreException.GraphQLResponseException appSyncError =
+                        (DataStoreException.GraphQLResponseException) error;
+                    return mutationOutbox.remove(mutationOutboxItem.getMutationId())
+                            .andThen(versionRepository.findModelVersion(mutationOutboxItem.getMutatedItem()))
+                            .onErrorReturnItem(-1)
+                            .flatMapCompletable(version -> Completable.defer(() -> {
+                                if (version == -1 && mutationOutboxItem.getMutationType() == PendingMutation.Type.CREATE) {
+                                    LOG.warn("Item available in server but metadata isn't available locally", new IllegalStateException("Item available in server but metadata isn't available locally, model " + mutationOutboxItem.getMutatedItem().getModelName() + ", id " + mutationOutboxItem.getMutatedItem().getId()));
+                                    return merger.merge(new ModelWithMetadata<>(mutationOutboxItem.getMutatedItem(), new ModelMetadata(
+                                            mutationOutboxItem.getMutatedItem().getId(),
+                                            false,
+                                            1,
+                                            new Temporal.Timestamp()
+                                    )));
+                                }
+                                else return Completable.complete();
+                            }))
+                        .doOnComplete(() -> announceMutationFailed(mutationOutboxItem, appSyncError));
+                }
+                return Completable.error(error);
             })
             // Finally, catch all.
-            .doOnError(error -> {
-                LOG.warn("Failed to publish a local change = " + mutationOutboxItem, error);
-            });
+            .doOnError(error -> LOG.warn("Failed to publish a local change = " + mutationOutboxItem, error));
     }
 
     private <T extends Model> ModelWithMetadata<? extends Model> ensureModelHasSchema(
@@ -286,12 +310,20 @@ final class MutationProcessor {
     private <T extends Model> Single<ModelWithMetadata<T>> update(PendingMutation<T> mutation) {
         final T updatedItem = mutation.getMutatedItem();
         final ModelSchema updatedItemSchema =
-            this.schemaRegistry.getModelSchemaForModelClass(updatedItem.getModelName());
-        return versionRepository.findModelVersion(updatedItem).flatMap(version ->
-            publishWithStrategy(mutation, (model, onSuccess, onError) ->
-                appSync.update(model, updatedItemSchema, version, mutation.getPredicate(), onSuccess, onError)
-            )
-        );
+                this.schemaRegistry.getModelSchemaForModelClass(updatedItem.getModelName());
+        return versionRepository.findModelVersion(updatedItem)
+                .onErrorReturnItem(-1)
+                .flatMap(version ->
+                        publishWithStrategy(mutation, (model, onSuccess, onError) -> {
+                                    if (version == -1) { //item version isn't available for a past error. That means item is not available in server as well. So create instead of update
+                                        appSync.create(model, updatedItemSchema, onSuccess, onError);
+                                        LOG.warn("Item version isn't available for update mutation", new IllegalStateException("Item version isn't available for update mutation, model " + updatedItem.getModelName() + ", id " + updatedItem.getId()));
+                                    } else {
+                                        appSync.update(model, updatedItemSchema, version, mutation.getPredicate(), onSuccess, onError);
+                                    }
+                                }
+                        )
+                );
     }
 
     // For an item in the outbox, dispatch a create mutation
@@ -307,14 +339,18 @@ final class MutationProcessor {
     private <T extends Model> Single<ModelWithMetadata<T>> delete(PendingMutation<T> mutation) {
         final T deletedItem = mutation.getMutatedItem();
         final ModelSchema deletedItemSchema =
-            this.schemaRegistry.getModelSchemaForModelClass(deletedItem.getModelName());
-        return versionRepository.findModelVersion(deletedItem).flatMap(version ->
-            publishWithStrategy(mutation, (model, onSuccess, onError) ->
-                appSync.delete(
-                    deletedItem, deletedItemSchema, version, mutation.getPredicate(), onSuccess, onError
-                )
-            )
-        );
+                this.schemaRegistry.getModelSchemaForModelClass(deletedItem.getModelName());
+        return versionRepository.findModelVersion(deletedItem)
+                .onErrorReturnItem(-1)
+                .flatMap(version ->
+                        publishWithStrategy(mutation, (model, onSuccess, onError) -> {
+                                    if (version != -1)
+                                        appSync.delete(
+                                                deletedItem, deletedItemSchema, version, mutation.getPredicate(), onSuccess, onError
+                                        );
+                                }
+                        )
+                );
     }
 
     /**
@@ -413,8 +449,10 @@ final class MutationProcessor {
             BuilderSteps.ModelSchemaRegistryStep,
             BuilderSteps.MutationOutboxStep,
             BuilderSteps.AppSyncStep,
+            BuilderSteps.ConflictResolverStep,
             BuilderSteps.DataStoreConfigurationProviderStep,
             BuilderSteps.RetryHandlerStep,
+            BuilderSteps.OnFailureStep,
             BuilderSteps.BuildStep {
         private Merger merger;
         private VersionRepository versionRepository;
@@ -423,6 +461,8 @@ final class MutationProcessor {
         private AppSync appSync;
         private DataStoreConfigurationProvider dataStoreConfiguration;
         private RetryHandler retryHandler;
+        private ConflictResolver conflictResolver;
+        private Consumer<Throwable> onFailure;
 
         @NonNull
         @Override
@@ -461,6 +501,15 @@ final class MutationProcessor {
 
         @NonNull
         @Override
+        public BuilderSteps.OnFailureStep conflictResolver(@NonNull ConflictResolver conflictResolver) {
+            Builder.this.conflictResolver = Objects.requireNonNull(conflictResolver);
+            return Builder.this;
+        }
+
+        @NonNull
+        @Override
+        public BuilderSteps.BuildStep onFailure(@NonNull Consumer<Throwable> onFailure) {
+            Builder.this.onFailure = Objects.requireNonNull(onFailure);
         public BuilderSteps.RetryHandlerStep dataStoreConfigurationProvider(
                 @NonNull DataStoreConfigurationProvider dataStoreConfiguration) {
             Builder.this.dataStoreConfiguration = Objects.requireNonNull(dataStoreConfiguration);
@@ -509,6 +558,12 @@ final class MutationProcessor {
 
         interface DataStoreConfigurationProviderStep {
             @NonNull
+            OnFailureStep conflictResolver(@NonNull ConflictResolver conflictResolver);
+        }
+
+        interface OnFailureStep {
+            @NonNull
+            BuildStep onFailure(@NonNull Consumer<Throwable> onFailure);
             RetryHandlerStep dataStoreConfigurationProvider(
                     DataStoreConfigurationProvider dataStoreConfiguration);
         }

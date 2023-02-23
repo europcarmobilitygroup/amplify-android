@@ -55,7 +55,7 @@ final class StorageObserver {
      * When a change is observed on the storage adapter, and that change wasn't caused
      * by the sync engine, then place that change into the mutation outbox.
      */
-    void startObservingStorageChanges(Action onStarted) {
+    void startObservingStorageChanges(Action onStarted, Action onStopped) {
         ongoingOperationsDisposable.add(
             Observable.<StorageItemChange<? extends Model>>create(emitter -> {
                 localStorageAdapter.observe(emitter::onNext, emitter::onError, emitter::onComplete);
@@ -73,8 +73,14 @@ final class StorageObserver {
             .map(this::toPendingMutation)
             .flatMapCompletable(mutationOutbox::enqueue)
             .subscribe(
-                () -> LOG.warn("Storage adapter subscription terminated with completion."),
-                error -> LOG.warn("Storage adapter subscription ended in error", error)
+                () -> {
+                    LOG.warn("Storage adapter subscription terminated with completion.");
+                    onStopped.call();
+                },
+                error -> {
+                    LOG.error("Storage adapter subscription ended in error", error);
+                    onStopped.call();
+                }
             )
         );
     }

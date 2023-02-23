@@ -48,6 +48,11 @@ public enum DataStoreChannelEventName {
     SUBSCRIPTIONS_ESTABLISHED("subscriptionsEstablished"),
 
     /**
+     * Start subscribing using WebSocket
+     */
+    SUBSCRIPTIONS_IN_PROGRESS("subscriptionsInProgress"),
+
+    /**
      * The server sent the client data over the WebSocket subscription. The data was
      * successfully melded back into the local store.
      */

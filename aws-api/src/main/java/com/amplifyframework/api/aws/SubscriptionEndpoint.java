@@ -48,6 +48,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import okhttp3.ConnectionPool;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -62,6 +63,10 @@ final class SubscriptionEndpoint {
     private static final Logger LOG = Amplify.Logging.forNamespace("amplify:aws-api");
     private static final int CONNECTION_ACKNOWLEDGEMENT_TIMEOUT = 30 /* seconds */;
     private static final int NORMAL_CLOSURE_STATUS = 1000;
+    private static final int CONNECTION_TIMEOUT_SEC = 15;
+    private static final int PING_TIMEOUT_SEC = CONNECTION_TIMEOUT_SEC - 5; /* seconds */
+    private static final int KEEP_ALIVE_SEC = 1; /* seconds */
+    private static final int MAX_IDLE_CONNECTION = 0;
     private static final String UNAUTHORIZED_EXCEPTION = "UnauthorizedException";
 
     private final ApiConfiguration apiConfiguration;
@@ -78,7 +83,7 @@ final class SubscriptionEndpoint {
             @NonNull ApiConfiguration apiConfiguration,
             @NonNull GraphQLResponse.Factory responseFactory,
             @NonNull SubscriptionAuthorizer authorizer
-    ) throws ApiException {
+    ) {
         this.apiConfiguration = Objects.requireNonNull(apiConfiguration);
         this.subscriptions = new ConcurrentHashMap<>();
         this.responseFactory = Objects.requireNonNull(responseFactory);
@@ -86,9 +91,18 @@ final class SubscriptionEndpoint {
         this.timeoutWatchdog = new TimeoutWatchdog();
         this.pendingSubscriptionIds = Collections.synchronizedSet(new HashSet<>());
         this.okHttpClient = new OkHttpClient.Builder()
-            .addNetworkInterceptor(UserAgentInterceptor.using(UserAgent::string))
-            .retryOnConnectionFailure(true)
-            .build();
+                .addNetworkInterceptor(UserAgentInterceptor.using(UserAgent::string))
+                .retryOnConnectionFailure(true)
+                .connectTimeout(CONNECTION_TIMEOUT_SEC, TimeUnit.SECONDS)
+                /* workaround for okhttp client's dead connection pool bug
+                * https://github.com/square/okhttp/issues/3146
+                * */
+                .connectionPool(new ConnectionPool(MAX_IDLE_CONNECTION, KEEP_ALIVE_SEC, TimeUnit.SECONDS))
+                /*
+                * To close the connection when internet is not available
+                * */
+                .pingInterval(PING_TIMEOUT_SEC, TimeUnit.SECONDS)
+                .build();
     }
 
     synchronized <T> void requestSubscription(
@@ -138,6 +152,7 @@ final class SubscriptionEndpoint {
         // Every request waits here for the connection to be ready.
         Connection connection = webSocketListener.waitForConnectionReady();
         if (connection.hasFailure()) {
+            webSocket.cancel();
             // If the latch didn't count all the way down
             if (pendingSubscriptionIds.remove(subscriptionId)) {
                 // The subscription was pending, so we need to emit an error.
@@ -184,6 +199,9 @@ final class SubscriptionEndpoint {
         if (subscription.awaitSubscriptionReady()) {
             pendingSubscriptionIds.remove(subscriptionId);
             onSubscriptionStarted.accept(subscriptionId);
+        }
+        else{
+            webSocket.cancel();
         }
     }
 
@@ -285,12 +303,6 @@ final class SubscriptionEndpoint {
 
         subscriptions.remove(subscriptionId);
 
-        // If we have zero subscriptions, close the WebSocket
-        if (subscriptions.size() == 0) {
-            LOG.info("No more active subscriptions. Closing web socket.");
-            timeoutWatchdog.stop();
-            webSocket.close(NORMAL_CLOSURE_STATUS, "No active subscriptions");
-        }
     }
 
     /*

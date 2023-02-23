@@ -43,6 +43,7 @@ public final class DataStoreConfiguration {
     static final long DEFAULT_SYNC_INTERVAL_MINUTES = TimeUnit.DAYS.toMinutes(1);
     @VisibleForTesting
     static final int DEFAULT_SYNC_MAX_RECORDS = 10_000;
+    static final int DEFAULT_DATABASE_VERSION = 1;
     @VisibleForTesting
     static final int DEFAULT_SYNC_PAGE_SIZE = 1_000;
     @VisibleForTesting
@@ -61,6 +62,7 @@ public final class DataStoreConfiguration {
     private final Long syncIntervalInMinutes;
     private final Long maxTimeLapseForObserveQuery;
     private final Integer observeQueryMaxRecords;
+    private final int databaseVersion;
 
     private DataStoreConfiguration(Builder builder) {
         this.errorHandler = builder.errorHandler;
@@ -72,6 +74,7 @@ public final class DataStoreConfiguration {
         this.doSyncRetry = builder.doSyncRetry;
         this.maxTimeLapseForObserveQuery = builder.maxTimeLapseForObserveQuery;
         this.observeQueryMaxRecords = builder.observeQueryMaxRecords;
+        this.databaseVersion = builder.databaseVersion;
     }
 
     /**
@@ -125,6 +128,7 @@ public final class DataStoreConfiguration {
             .syncInterval(DEFAULT_SYNC_INTERVAL_MINUTES, TimeUnit.MINUTES)
             .syncPageSize(DEFAULT_SYNC_PAGE_SIZE)
             .syncMaxRecords(DEFAULT_SYNC_MAX_RECORDS)
+                .databaseVersion(DEFAULT_DATABASE_VERSION)
                 .doSyncRetry(DEFAULT_DO_SYNC_RETRY)
                 .observeQueryMaxTime(MAX_TIME_SEC)
                 .observeQueryMaxRecords(MAX_RECORDS)
@@ -198,6 +202,10 @@ public final class DataStoreConfiguration {
      */
     public Boolean getDoSyncRetry() {
         return this.doSyncRetry;
+    }
+
+    public int getDatabaseVersion(){
+        return this.databaseVersion;
     }
 
     /**
@@ -314,6 +322,7 @@ public final class DataStoreConfiguration {
         private DataStoreConfiguration userProvidedConfiguration;
         private Integer observeQueryMaxRecords;
         private long maxTimeLapseForObserveQuery;
+        private int databaseVersion;
 
         private Builder() {
             this.errorHandler = DefaultDataStoreErrorHandler.instance();
@@ -338,6 +347,16 @@ public final class DataStoreConfiguration {
         @NonNull
         public Builder conflictHandler(@NonNull DataStoreConflictHandler conflictHandler) {
             this.conflictHandler = Objects.requireNonNull(conflictHandler);
+            return Builder.this;
+        }
+
+        /**
+         * @param databaseVersion increased database version if any table is altered
+         * @return Current builder
+         */
+        @NonNull
+        public Builder databaseVersion(int databaseVersion) {
+            this.databaseVersion = databaseVersion;
             return Builder.this;
         }
 

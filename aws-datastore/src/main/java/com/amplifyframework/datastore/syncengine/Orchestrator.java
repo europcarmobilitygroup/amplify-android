@@ -109,6 +109,8 @@ public final class Orchestrator {
             .appSync(appSync)
             .dataStoreConfigurationProvider(dataStoreConfigurationProvider)
             .retryHandler(new RetryHandler())
+            .conflictResolver(conflictResolver)
+            .onFailure(this::onApiSyncFailure)
             .build();
         this.syncProcessor = SyncProcessor.builder()
             .modelProvider(modelProvider)
@@ -202,8 +204,8 @@ public final class Orchestrator {
         switch (currentState.get()) {
             case SYNC_VIA_API:
                 LOG.info("Orchestrator transitioning from SYNC_VIA_API to STOPPED");
-                stopApiSync();
                 stopObservingStorageChanges();
+                stopApiSync();
                 break;
             case LOCAL_ONLY:
                 LOG.info("Orchestrator transitioning from LOCAL_ONLY to STOPPED");
@@ -264,8 +266,8 @@ public final class Orchestrator {
         try {
             mutationOutbox.load()
                 .andThen(Completable.create(emitter -> {
-                    storageObserver.startObservingStorageChanges(emitter::onComplete);
-                    LOG.info("Setting currentState to LOCAL_ONLY");
+                    storageObserver.startObservingStorageChanges(emitter::onComplete, () -> stop().subscribe());
+                    LOG.info("Setting currentState from " + currentState.get() + " to LOCAL_ONLY");
                     currentState.set(State.LOCAL_ONLY);
                 })).blockingAwait();
         } catch (Throwable throwable) {
@@ -281,15 +283,17 @@ public final class Orchestrator {
     private void stopObservingStorageChanges() {
         LOG.info("Stopping observation of local storage changes.");
         storageObserver.stopObservingStorageChanges();
-        LOG.info("Setting currentState to STOPPED");
+        LOG.info("Setting currentState from " + currentState.get() + " to STOPPED");
         currentState.set(State.STOPPED);
+        publishNetworkStatusEvent(false);
     }
 
     /**
      * Start syncing models to and from a remote API.
      */
     private void startApiSync() {
-        LOG.info("Setting currentState to SYNC_VIA_API");
+        LOG.info("Setting currentState from " + currentState.get() + " to SYNC_VIA_API");
+        if(currentState.get() == State.SYNC_VIA_API) return;
         currentState.set(State.SYNC_VIA_API);
         disposables.add(
             Completable.create(emitter -> {
@@ -301,6 +305,7 @@ public final class Orchestrator {
                 queryPredicateProvider.resolvePredicates();
 
                 try {
+                    publishSubscriptionInProgressEvent();
                     subscriptionProcessor.startSubscriptions();
                 } catch (Throwable failure) {
                     if (!emitter.tryOnError(
@@ -356,17 +361,22 @@ public final class Orchestrator {
                 HubEvent.create(DataStoreChannelEventName.NETWORK_STATUS, new NetworkStatusEvent(active)));
     }
 
+    private void publishSubscriptionInProgressEvent(){
+        Amplify.Hub.publish(HubChannel.DATASTORE,
+                HubEvent.create(DataStoreChannelEventName.SUBSCRIPTIONS_IN_PROGRESS));
+    }
+
     private void publishReadyEvent() {
         Amplify.Hub.publish(HubChannel.DATASTORE, HubEvent.create(DataStoreChannelEventName.READY));
     }
 
-    private void onApiSyncFailure(Throwable exception) {
+    private synchronized void onApiSyncFailure(Throwable exception) {
         // Don't transition to LOCAL_ONLY, if it's already in progress.
         if (!State.SYNC_VIA_API.equals(currentState.get())) {
             return;
         }
-        LOG.warn("API sync failed - transitioning to LOCAL_ONLY.", exception);
         publishNetworkStatusEvent(false);
+        LOG.warn("API sync failed - transitioning to LOCAL_ONLY.", exception);
         Completable.fromAction(this::transitionToLocalOnly)
             .doOnError(error -> LOG.warn("Transition to LOCAL_ONLY failed.", error))
             .subscribe();
@@ -375,12 +385,22 @@ public final class Orchestrator {
     /**
      * Stop all model synchronization with the remote API.
      */
-    private void stopApiSync() {
-        LOG.info("Setting currentState to LOCAL_ONLY");
-        currentState.set(State.LOCAL_ONLY);
+    private synchronized void stopApiSync() {
+        if(currentState.get() != State.STOPPED) {
+            LOG.info("Setting currentState from " + currentState.get() + " to LOCAL_ONLY");
+            currentState.set(State.LOCAL_ONLY);
+        }
         disposables.clear();
         subscriptionProcessor.stopAllSubscriptionActivity();
         mutationProcessor.stopDrainingMutationOutbox();
+    }
+
+    /**
+     *
+     * @return is Orchestrator in stopped state
+     */
+    public boolean isStopped(){
+        return currentState.get() == State.STOPPED;
     }
 
     /**

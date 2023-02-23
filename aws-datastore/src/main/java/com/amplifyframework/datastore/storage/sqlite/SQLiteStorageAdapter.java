@@ -52,6 +52,7 @@ import com.amplifyframework.datastore.storage.LocalStorageAdapter;
 import com.amplifyframework.datastore.storage.StorageItemChange;
 import com.amplifyframework.datastore.storage.sqlite.adapter.SQLiteColumn;
 import com.amplifyframework.datastore.storage.sqlite.adapter.SQLiteTable;
+import com.amplifyframework.datastore.storage.sqlite.migrations.MigrationConfiguration;
 import com.amplifyframework.datastore.storage.sqlite.migrations.ModelMigrations;
 import com.amplifyframework.logging.Logger;
 import com.amplifyframework.util.GsonFactory;
@@ -85,18 +86,18 @@ import io.reactivex.rxjava3.subjects.Subject;
 public final class SQLiteStorageAdapter implements LocalStorageAdapter {
     private static final Logger LOG = Amplify.Logging.forNamespace("amplify:aws-datastore");
     private static final long THREAD_POOL_TERMINATE_TIMEOUT = TimeUnit.SECONDS.toMillis(5);
-    // Database Version
-    private static final int DATABASE_VERSION = 1;
 
     // Thread pool size is determined as number of processors multiplied by this value.  We want to allow more threads
     // than available processors to parallelize primarily IO bound work, but still provide a limit to avoid out of
     // memory errors.
-    private static final int THREAD_POOL_SIZE_MULTIPLIER = 20;
+    private static final int THREAD_POOL_SIZE = 1;
 
     @VisibleForTesting @SuppressWarnings("checkstyle:all") // Keep logger first
     static final String DEFAULT_DATABASE_NAME = "AmplifyDatastore.db";
 
     private final String databaseName;
+
+    private final int databaseVersion;
 
     // Provider of the Models that will be warehouse-able by the DataStore
     // and models that are used internally for DataStore to track metadata
@@ -105,6 +106,7 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
     // SchemaRegistry instance that gives the ModelSchema, CustomTypeSchema (Flutter) and Model objects
     // based on Model class name lookup mechanism.
     private final SchemaRegistry schemaRegistry;
+    private final MigrationConfiguration migrationConfiguration;
 
     // ThreadPool for SQLite operations.
     private ExecutorService threadPool;
@@ -155,21 +157,27 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
     private SQLiteStorageAdapter(
             SchemaRegistry schemaRegistry,
             ModelProvider userModelsProvider,
-            ModelProvider systemModelsProvider) {
-        this(schemaRegistry, userModelsProvider, systemModelsProvider, DEFAULT_DATABASE_NAME);
+            ModelProvider systemModelsProvider,
+            int databaseVersion,
+            MigrationConfiguration migrationConfiguration) {
+        this(schemaRegistry, userModelsProvider, systemModelsProvider, DEFAULT_DATABASE_NAME, databaseVersion, migrationConfiguration);
     }
 
     private SQLiteStorageAdapter(
         SchemaRegistry schemaRegistry,
         ModelProvider userModelsProvider,
         ModelProvider systemModelsProvider,
-        String databaseName) {
+        String databaseName,
+        int databaseVersion,
+        MigrationConfiguration migrationConfiguration) {
         this.schemaRegistry = schemaRegistry;
         this.modelsProvider = CompoundModelProvider.of(systemModelsProvider, userModelsProvider);
         this.gson = GsonFactory.instance();
         this.itemChangeSubject = PublishSubject.<StorageItemChange<? extends Model>>create().toSerialized();
         this.toBeDisposed = new CompositeDisposable();
         this.databaseName = databaseName;
+        this.databaseVersion = databaseVersion;
+        this.migrationConfiguration = migrationConfiguration;
     }
 
     /**
@@ -181,11 +189,15 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
     @NonNull
     public static SQLiteStorageAdapter forModels(
             @NonNull SchemaRegistry schemaRegistry,
-            @NonNull ModelProvider userModelsProvider) {
+            @NonNull ModelProvider userModelsProvider,
+            int databaseVersion,
+            MigrationConfiguration migrationConfiguration) {
         return new SQLiteStorageAdapter(
             schemaRegistry,
             Objects.requireNonNull(userModelsProvider),
-            SystemModelsProviderFactory.create()
+            SystemModelsProviderFactory.create(),
+            databaseVersion,
+            migrationConfiguration
         );
     }
 
@@ -200,12 +212,16 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
     static SQLiteStorageAdapter forModels(
         @NonNull SchemaRegistry schemaRegistry,
         @NonNull ModelProvider userModelsProvider,
-        @NonNull String databaseName) {
+        @NonNull String databaseName,
+        int databaseVersion,
+        MigrationConfiguration migrationConfiguration) {
         return new SQLiteStorageAdapter(
             schemaRegistry,
             Objects.requireNonNull(userModelsProvider),
             SystemModelsProviderFactory.create(),
-            databaseName
+            databaseName,
+            databaseVersion,
+            migrationConfiguration
         );
     }
 
@@ -223,8 +239,7 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
         Objects.requireNonNull(onError);
         // Create a thread pool large enough to take advantage of parallelization, but small enough to avoid
         // OutOfMemoryError and CursorWindowAllocationException issues.
-        this.threadPool = Executors.newFixedThreadPool(
-                Runtime.getRuntime().availableProcessors() * THREAD_POOL_SIZE_MULTIPLIER);
+        this.threadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
         this.context = context;
         this.dataStoreConfiguration = dataStoreConfiguration;
         threadPool.submit(() -> {
@@ -250,8 +265,9 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
                 sqliteStorageHelper = SQLiteStorageHelper.getInstance(
                         context,
                         databaseName,
-                        DATABASE_VERSION,
-                        createSqlCommands);
+                        databaseVersion,
+                        createSqlCommands,
+                        new MigrationCommands(migrationConfiguration.getMigrationList()));
 
                 /*
                  * Create and/or open a database. This also invokes

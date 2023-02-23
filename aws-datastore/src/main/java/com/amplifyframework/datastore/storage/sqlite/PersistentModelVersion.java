@@ -94,7 +94,7 @@ public final class PersistentModelVersion implements Model {
         return Single.create(emitter ->
             localStorageAdapter.save(
                 persistentModelVersion,
-                StorageItemChange.Initiator.DATA_STORE_API,
+                StorageItemChange.Initiator.SYNC_ENGINE,
                 QueryPredicates.all(),
                 ignored -> emitter.onSuccess(persistentModelVersion),
                 emitter::onError
@@ -144,6 +144,7 @@ public final class PersistentModelVersion implements Model {
         return result;
     }
 
+    @NonNull
     @Override
     public String toString() {
         return "PersistentModelVersion{" +
