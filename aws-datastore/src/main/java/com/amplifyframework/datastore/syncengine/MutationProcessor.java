@@ -82,8 +82,9 @@ final class MutationProcessor {
     /**
      * Returns a step builder to begin construction of a new
      * {@link MutationProcessor} instance.
+     *
      * @return The first step in a sequence of steps to build an instance
-     *          of the mutation processor
+     * of the mutation processor
      */
     public static BuilderSteps.MergerStep builder() {
         return new Builder();
@@ -91,7 +92,7 @@ final class MutationProcessor {
 
     /**
      * Start observing the mutation outbox for locally-initiated changes.
-     *
+     * <p>
      * To process a pending mutation, we try to publish it to the remote GraphQL
      * API. If that succeeds, then we can remove it from the outbox. Otherwise,
      * we have to keep the mutation in the outbox, so that we can try to publish
@@ -99,23 +100,23 @@ final class MutationProcessor {
      */
     void startDrainingMutationOutbox() {
         ongoingOperationsDisposable.add(mutationOutbox.events()
-            .doOnSubscribe(disposable ->
-                LOG.info(
-                    "Started processing the mutation outbox. " +
-                        "Pending mutations will be published to the cloud."
+                .doOnSubscribe(disposable ->
+                        LOG.info(
+                                "Started processing the mutation outbox. " +
+                                        "Pending mutations will be published to the cloud."
+                        )
                 )
-            )
-            .startWithItem(MutationOutbox.OutboxEvent.CONTENT_AVAILABLE) // To start draining immediately
-            .subscribeOn(Schedulers.single())
-            .observeOn(Schedulers.single())
-            .flatMapCompletable(event -> drainMutationOutbox())
-            .subscribe(
-                () -> LOG.warn("Observation of mutation outbox was completed."),
-                error -> {
-                    LOG.warn("Error ended observation of mutation outbox: ", error);
-                    onFailure.accept(error);
-                }
-            )
+                .startWithItem(MutationOutbox.OutboxEvent.CONTENT_AVAILABLE) // To start draining immediately
+                .subscribeOn(Schedulers.single())
+                .observeOn(Schedulers.single())
+                .flatMapCompletable(event -> drainMutationOutbox())
+                .subscribe(
+                        () -> LOG.warn("Observation of mutation outbox was completed."),
+                        error -> {
+                            LOG.warn("Error ended observation of mutation outbox: ", error);
+                            onFailure.accept(error);
+                        }
+                )
         );
     }
 
@@ -128,7 +129,7 @@ final class MutationProcessor {
             }
             try {
                 processOutboxItem(next)
-                    .blockingAwait();
+                        .blockingAwait();
             } catch (RuntimeException error) {
                 return Completable.error(error);
             }
@@ -137,77 +138,77 @@ final class MutationProcessor {
 
     /**
      * Process an item in the mutation outbox.
+     *
      * @param mutationOutboxItem An item in the mutation outbox
-     * @param <T> Type of model
+     * @param <T>                Type of model
      * @return A Completable that emits success when the item is processed, emits failure, otherwise
      */
     private <T extends Model> Completable processOutboxItem(PendingMutation<T> mutationOutboxItem) {
         // First, mark the item as in-flight.
         return mutationOutbox.markInFlight(mutationOutboxItem.getMutationId())
-            // Then, put it "into flight"
-            .andThen(publishWithRetry(mutationOutboxItem)
-                .map(modelWithMetadata -> ensureModelHasSchema(mutationOutboxItem, modelWithMetadata))
-                .flatMapCompletable(modelWithMetadata ->
-                            // Once the server knows about it, it's safe to remove from the outbox.
-                            // This is done before merging, because the merger will refuse to merge
-                            // if there are outstanding mutations in the outbox.
-                            mutationOutbox.remove(mutationOutboxItem.getMutationId())
-                                .andThen(merger.merge(modelWithMetadata))
-                                .doOnComplete(() -> {
-                                    String modelName = mutationOutboxItem.getModelSchema().getName();
-                                    announceMutationProcessed(modelName, modelWithMetadata);
-                                })
+                // Then, put it "into flight"
+                .andThen(publishWithRetry(mutationOutboxItem)
+                        .map(modelWithMetadata -> ensureModelHasSchema(mutationOutboxItem, modelWithMetadata))
+                        .flatMapCompletable(modelWithMetadata ->
+                                // Once the server knows about it, it's safe to remove from the outbox.
+                                // This is done before merging, because the merger will refuse to merge
+                                // if there are outstanding mutations in the outbox.
+                                mutationOutbox.remove(mutationOutboxItem.getMutationId())
+                                        .andThen(merger.merge(modelWithMetadata))
+                                        .doOnComplete(() -> {
+                                            String modelName = mutationOutboxItem.getModelSchema().getName();
+                                            announceMutationProcessed(modelName, modelWithMetadata);
+                                        })
+                        )
                 )
-            )
-            .doOnComplete(() -> {
-                LOG.debug(
-                    "Pending mutation was published to cloud successfully, " +
-                        "and removed from the mutation outbox: " + mutationOutboxItem
-                );
-                publishCurrentOutboxStatus();
-            })
-            // Errors on a mutation shouldn't halt the processing of the remaining mutations.
-            // If an error happens, it has to be announced (via Hub and the error handler) and the mutation removed from
-            // the outbox.
-            .onErrorResumeNext(error -> {
-                if (error instanceof DataStoreException.GraphQLResponseException) {
-                    DataStoreException.GraphQLResponseException appSyncError =
-                        (DataStoreException.GraphQLResponseException) error;
-                    return mutationOutbox.remove(mutationOutboxItem.getMutationId())
-                            .andThen(versionRepository.findModelVersion(mutationOutboxItem.getMutatedItem()))
-                            .onErrorReturnItem(-1)
-                            .flatMapCompletable(version -> Completable.defer(() -> {
-                                if (version == -1 && mutationOutboxItem.getMutationType() == PendingMutation.Type.CREATE) {
-                                    LOG.warn("Item available in server but metadata isn't available locally", new IllegalStateException("Item available in server but metadata isn't available locally, model " + mutationOutboxItem.getMutatedItem().getModelName() + ", id " + mutationOutboxItem.getMutatedItem().getId()));
-                                    return merger.merge(new ModelWithMetadata<>(mutationOutboxItem.getMutatedItem(), new ModelMetadata(
-                                            mutationOutboxItem.getMutatedItem().getId(),
-                                            false,
-                                            1,
-                                            new Temporal.Timestamp()
-                                    )));
-                                }
-                                else return Completable.complete();
-                            }))
-                        .doOnComplete(() -> announceMutationFailed(mutationOutboxItem, appSyncError));
-                }
-                return Completable.error(error);
-            })
-            // Finally, catch all.
-            .doOnError(error -> LOG.warn("Failed to publish a local change = " + mutationOutboxItem, error));
+                .doOnComplete(() -> {
+                    LOG.debug(
+                            "Pending mutation was published to cloud successfully, " +
+                                    "and removed from the mutation outbox: " + mutationOutboxItem
+                    );
+                    publishCurrentOutboxStatus();
+                })
+                // Errors on a mutation shouldn't halt the processing of the remaining mutations.
+                // If an error happens, it has to be announced (via Hub and the error handler) and the mutation removed from
+                // the outbox.
+                .onErrorResumeNext(error -> {
+                    if (error instanceof DataStoreException.GraphQLResponseException) {
+                        DataStoreException.GraphQLResponseException appSyncError =
+                                (DataStoreException.GraphQLResponseException) error;
+                        return mutationOutbox.remove(mutationOutboxItem.getMutationId())
+                                .andThen(versionRepository.findModelVersion(mutationOutboxItem.getMutatedItem()))
+                                .onErrorReturnItem(-1)
+                                .flatMapCompletable(version -> Completable.defer(() -> {
+                                    if (version == -1 && mutationOutboxItem.getMutationType() == PendingMutation.Type.CREATE) {
+                                        LOG.warn("Item available in server but metadata isn't available locally", new IllegalStateException("Item available in server but metadata isn't available locally, model " + mutationOutboxItem.getMutatedItem().getModelName() + ", id " + mutationOutboxItem.getMutatedItem().getPrimaryKeyString()));
+                                        return merger.merge(new ModelWithMetadata<>(mutationOutboxItem.getMutatedItem(), new ModelMetadata(
+                                                mutationOutboxItem.getMutatedItem().getPrimaryKeyString(),
+                                                false,
+                                                1,
+                                                new Temporal.Timestamp()
+                                        )));
+                                    } else return Completable.complete();
+                                }))
+                                .doOnComplete(() -> announceMutationFailed(mutationOutboxItem, appSyncError));
+                    }
+                    return Completable.error(error);
+                })
+                // Finally, catch all.
+                .doOnError(error -> LOG.warn("Failed to publish a local change = " + mutationOutboxItem, error));
     }
 
     private <T extends Model> ModelWithMetadata<? extends Model> ensureModelHasSchema(
-        PendingMutation<T> mutationOutboxItem,
-        ModelWithMetadata<T> modelWithMetadata
+            PendingMutation<T> mutationOutboxItem,
+            ModelWithMetadata<T> modelWithMetadata
     ) {
         return (modelWithMetadata.getModel() instanceof SerializedModel)
-            ? modelWithSchemaAdded(modelWithMetadata, mutationOutboxItem.getModelSchema())
-            : modelWithMetadata;
+                ? modelWithSchemaAdded(modelWithMetadata, mutationOutboxItem.getModelSchema())
+                : modelWithMetadata;
     }
 
     private <T extends Model> ModelWithMetadata<? extends Model> modelWithSchemaAdded(
-        ModelWithMetadata<T> modelWithMetadata,
-        ModelSchema modelSchema
+            ModelWithMetadata<T> modelWithMetadata,
+            ModelSchema modelSchema
     ) {
         final SerializedModel originalModel = (SerializedModel) modelWithMetadata.getModel();
         final SerializedModel newModel = SerializedModel.builder()
@@ -217,14 +218,15 @@ final class MutationProcessor {
                         modelSchema.getName(),
                         schemaRegistry
                 ))
-            .build();
+                .build();
         return new ModelWithMetadata<>(newModel, modelWithMetadata.getSyncMetadata());
     }
 
     /**
      * Publish a successfully mutated model and its metadata to hub.
+     *
      * @param modelWithMetadata A model that was successfully mutated and its sync metadata
-     * @param <T> Type of model
+     * @param <T>               Type of model
      */
     private <T extends Model> void announceMutationProcessed(
             String modelName,
@@ -236,9 +238,10 @@ final class MutationProcessor {
 
     /**
      * Publish hub event to indicate that mutation failed to publish.
+     *
      * @param pendingMutation Pending mutation that triggered AppSync error response
-     * @param error Exception containing AppSync errors
-     * @param <T> Type of model
+     * @param error           Exception containing AppSync errors
+     * @param <T>             Type of model
      */
     private <T extends Model> void announceMutationFailed(
             PendingMutation<T> pendingMutation,
@@ -270,7 +273,7 @@ final class MutationProcessor {
      */
     private void publishCurrentOutboxStatus() {
         HubEvent<OutboxStatusEvent> hubEvent =
-            new OutboxStatusEvent(mutationOutbox.peek() == null).toHubEvent();
+                new OutboxStatusEvent(mutationOutbox.peek() == null).toHubEvent();
         Amplify.Hub.publish(HubChannel.DATASTORE, hubEvent);
     }
 
@@ -285,10 +288,11 @@ final class MutationProcessor {
 
     /**
      * Attempt to publish a mutation (update, delete, creation) over the network.
+     *
      * @param pendingMutation A pending mutation, waiting to be published to remote API
-     * @param <T> Type of model
+     * @param <T>             Type of model
      * @return A single which completes with the successfully published item, or emits error
-     *         if the publication fails
+     * if the publication fails
      */
     private <T extends Model> Single<ModelWithMetadata<T>> publishToNetwork(PendingMutation<T> pendingMutation) {
         switch (pendingMutation.getMutationType()) {
@@ -300,8 +304,8 @@ final class MutationProcessor {
                 return delete(pendingMutation);
             default:
                 return Single.error(new DataStoreException(
-                   "Unknown mutation type in storage = " + pendingMutation.getMutationType(),
-                   "This is likely a bug. Please file a ticket with AWS."
+                        "Unknown mutation type in storage = " + pendingMutation.getMutationType(),
+                        "This is likely a bug. Please file a ticket with AWS."
                 ));
         }
     }
@@ -317,7 +321,7 @@ final class MutationProcessor {
                         publishWithStrategy(mutation, (model, onSuccess, onError) -> {
                                     if (version == -1) { //item version isn't available for a past error. That means item is not available in server as well. So create instead of update
                                         appSync.create(model, updatedItemSchema, onSuccess, onError);
-                                        LOG.warn("Item version isn't available for update mutation", new IllegalStateException("Item version isn't available for update mutation, model " + updatedItem.getModelName() + ", id " + updatedItem.getId()));
+                                        LOG.warn("Item version isn't available for update mutation", new IllegalStateException("Item version isn't available for update mutation, model " + updatedItem.getModelName() + ", id " + updatedItem.getPrimaryKeyString()));
                                     } else {
                                         appSync.update(model, updatedItemSchema, version, mutation.getPredicate(), onSuccess, onError);
                                     }
@@ -330,9 +334,9 @@ final class MutationProcessor {
     private <T extends Model> Single<ModelWithMetadata<T>> create(PendingMutation<T> mutation) {
         final T createdItem = mutation.getMutatedItem();
         final ModelSchema createdItemSchema =
-            this.schemaRegistry.getModelSchemaForModelClass(createdItem.getModelName());
+                this.schemaRegistry.getModelSchemaForModelClass(createdItem.getModelName());
         return publishWithStrategy(mutation, (model, onSuccess, onError) ->
-            appSync.create(model, createdItemSchema, onSuccess, onError));
+                appSync.create(model, createdItemSchema, onSuccess, onError));
     }
 
     // For an item in the outbox, dispatch a delete mutation
@@ -355,32 +359,33 @@ final class MutationProcessor {
 
     /**
      * For an pending mutation, publish mutated item using a publication strategy.
-     * @param mutation A mutation that is waiting to be published
+     *
+     * @param mutation            A mutation that is waiting to be published
      * @param publicationStrategy A strategy to publish the mutated item
-     * @param <T> The model type of the item
+     * @param <T>                 The model type of the item
      * @return A single which emits the model with its metadata, upon success; emits
-     *         a failure, if publication does not succeed
+     * a failure, if publication does not succeed
      */
     @NonNull
     private <T extends Model> Single<ModelWithMetadata<T>> publishWithStrategy(
             @NonNull PendingMutation<T> mutation,
             @NonNull PublicationStrategy<T> publicationStrategy) {
         return Single
-            .<GraphQLResponse<ModelWithMetadata<T>>>create(subscriber ->
-                publicationStrategy.publish(mutation.getMutatedItem(), subscriber::onSuccess, (exception) -> {
-                    if (!subscriber.isDisposed()) {
-                        subscriber.onError(exception);
+                .<GraphQLResponse<ModelWithMetadata<T>>>create(subscriber ->
+                        publicationStrategy.publish(mutation.getMutatedItem(), subscriber::onSuccess, (exception) -> {
+                            if (!subscriber.isDisposed()) {
+                                subscriber.onError(exception);
+                            }
+                        })
+                )
+                .flatMap(response -> {
+                    // If there are no errors, and the response has data, just return.
+                    if (!response.hasErrors() && response.hasData()) {
+                        return Single.just(response.getData());
+                    } else {
+                        return handleResponseErrors(mutation, response.getErrors());
                     }
-                })
-            )
-            .flatMap(response -> {
-                // If there are no errors, and the response has data, just return.
-                if (!response.hasErrors() && response.hasData()) {
-                    return Single.just(response.getData());
-                } else {
-                    return handleResponseErrors(mutation, response.getErrors());
-                }
-            });
+                });
     }
 
     private <T extends Model> Single<ModelWithMetadata<T>> publishWithRetry(
@@ -395,10 +400,11 @@ final class MutationProcessor {
 
     /**
      * Handle errors that come back from AppSync while attempting to publish a mutation.
+     *
      * @param <T> Type of model for which a publication had response errors
      * @return A ModelWithMetadata representing the data as AppSync understands it;
-     *         the MutationProcessor should apply this data into the local store,
-     *         in a later step.
+     * the MutationProcessor should apply this data into the local store,
+     * in a later step.
      */
     @SuppressWarnings("unchecked")
     private <T extends Model> Single<ModelWithMetadata<T>> handleResponseErrors(
@@ -410,7 +416,7 @@ final class MutationProcessor {
         // so we just bubble those out in a DataStoreException.
         Class<T> modelClazz = (Class<T>) pendingMutation.getModelSchema().getModelClass();
         AppSyncConflictUnhandledError<T> unhandledConflict =
-            AppSyncConflictUnhandledError.findFirst(modelClazz, errors);
+                AppSyncConflictUnhandledError.findFirst(modelClazz, errors);
         if (unhandledConflict != null) {
             LOG.warn(String.format("Unhandled conflict: %s", unhandledConflict));
             return conflictResolver.resolve(pendingMutation, unhandledConflict);
@@ -420,26 +426,28 @@ final class MutationProcessor {
         // error and bubble it up further to be taken care of inside
         // processOutboxItem() method.
         return Single.error(new DataStoreException.GraphQLResponseException(
-            "Mutation failed. Failed mutation = " + pendingMutation + ". " +
-                "AppSync response contained errors = " + errors, errors
+                "Mutation failed. Failed mutation = " + pendingMutation + ". " +
+                        "AppSync response contained errors = " + errors, errors
         ));
     }
 
     /**
      * A strategy to publish an item over the network.
+     *
      * @param <T> Type of model being published
      */
     interface PublicationStrategy<T extends Model> {
         /**
          * Publish a pending mutation, over the network.
-         * @param item An item to publish
+         *
+         * @param item      An item to publish
          * @param onSuccess Called when publication succeeds
          * @param onFailure Called when publication fails
          */
         void publish(
-            T item,
-            Consumer<GraphQLResponse<ModelWithMetadata<T>>> onSuccess,
-            Consumer<DataStoreException> onFailure
+                T item,
+                Consumer<GraphQLResponse<ModelWithMetadata<T>>> onSuccess,
+                Consumer<DataStoreException> onFailure
         );
     }
 
@@ -449,7 +457,6 @@ final class MutationProcessor {
             BuilderSteps.ModelSchemaRegistryStep,
             BuilderSteps.MutationOutboxStep,
             BuilderSteps.AppSyncStep,
-            BuilderSteps.ConflictResolverStep,
             BuilderSteps.DataStoreConfigurationProviderStep,
             BuilderSteps.RetryHandlerStep,
             BuilderSteps.OnFailureStep,
@@ -461,7 +468,6 @@ final class MutationProcessor {
         private AppSync appSync;
         private DataStoreConfigurationProvider dataStoreConfiguration;
         private RetryHandler retryHandler;
-        private ConflictResolver conflictResolver;
         private Consumer<Throwable> onFailure;
 
         @NonNull
@@ -501,15 +507,6 @@ final class MutationProcessor {
 
         @NonNull
         @Override
-        public BuilderSteps.OnFailureStep conflictResolver(@NonNull ConflictResolver conflictResolver) {
-            Builder.this.conflictResolver = Objects.requireNonNull(conflictResolver);
-            return Builder.this;
-        }
-
-        @NonNull
-        @Override
-        public BuilderSteps.BuildStep onFailure(@NonNull Consumer<Throwable> onFailure) {
-            Builder.this.onFailure = Objects.requireNonNull(onFailure);
         public BuilderSteps.RetryHandlerStep dataStoreConfigurationProvider(
                 @NonNull DataStoreConfigurationProvider dataStoreConfiguration) {
             Builder.this.dataStoreConfiguration = Objects.requireNonNull(dataStoreConfiguration);
@@ -518,8 +515,15 @@ final class MutationProcessor {
 
         @NonNull
         @Override
-        public BuilderSteps.BuildStep retryHandler(@NonNull RetryHandler retryHandler) {
+        public BuilderSteps.OnFailureStep retryHandler(@NonNull RetryHandler retryHandler) {
             this.retryHandler = retryHandler;
+            return Builder.this;
+        }
+
+        @NonNull
+        @Override
+        public BuilderSteps.BuildStep onFailure(@NonNull Consumer<Throwable> onFailure) {
+            Builder.this.onFailure = Objects.requireNonNull(onFailure);
             return Builder.this;
         }
 
@@ -558,19 +562,18 @@ final class MutationProcessor {
 
         interface DataStoreConfigurationProviderStep {
             @NonNull
-            OnFailureStep conflictResolver(@NonNull ConflictResolver conflictResolver);
-        }
-
-        interface OnFailureStep {
-            @NonNull
-            BuildStep onFailure(@NonNull Consumer<Throwable> onFailure);
             RetryHandlerStep dataStoreConfigurationProvider(
                     DataStoreConfigurationProvider dataStoreConfiguration);
         }
 
         interface RetryHandlerStep {
             @NonNull
-            BuildStep retryHandler(@NonNull RetryHandler retryHandler);
+            OnFailureStep retryHandler(@NonNull RetryHandler retryHandler);
+        }
+
+        interface OnFailureStep {
+            @NonNull
+            BuildStep onFailure(@NonNull Consumer<Throwable> onFailure);
         }
 
         interface BuildStep {

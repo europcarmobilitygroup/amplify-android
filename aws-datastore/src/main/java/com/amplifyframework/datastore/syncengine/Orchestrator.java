@@ -109,7 +109,6 @@ public final class Orchestrator {
             .appSync(appSync)
             .dataStoreConfigurationProvider(dataStoreConfigurationProvider)
             .retryHandler(new RetryHandler())
-            .conflictResolver(conflictResolver)
             .onFailure(this::onApiSyncFailure)
             .build();
         this.syncProcessor = SyncProcessor.builder()
