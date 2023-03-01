@@ -16,20 +16,15 @@
 package com.amplifyframework.datastore.storage.sqlite;
 
 import android.content.Context;
-import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+
 import androidx.annotation.NonNull;
-import androidx.core.util.ObjectsCompat;
 
 import com.amplifyframework.core.Amplify;
 import com.amplifyframework.logging.Logger;
-import com.amplifyframework.util.Empty;
-import com.amplifyframework.util.Wrap;
 
-import java.util.HashSet;
 import java.util.Objects;
-import java.util.Set;
 
 /**
  * A helper class to manage database creation and version management.
@@ -148,16 +143,7 @@ final class SQLiteStorageHelper extends SQLiteOpenHelper implements ModelUpdateS
         Objects.requireNonNull(oldVersion);
         Objects.requireNonNull(newVersion);
 
-        // Currently on any model version change, drop all tables created by the DataStore.
-        // TODO: This can be improved by detecting the specific changes in each Model and applying
-        // the changes to the existing schema of the SQLite tables.
-        if (!ObjectsCompat.equals(oldVersion, newVersion)) {
-            dropAllTables(sqliteDatabase);
-
-            // After the existing tables are dropped, call onCreate(SQLiteDatabase) to re-create
-            // the required tables.
-            onCreate(sqliteDatabase);
-        }
+        //Do nothing on model version upgrade. There already migration script running on database version update
     }
 
     private void createTablesAndIndexes(SQLiteDatabase sqliteDatabase) {
@@ -179,37 +165,6 @@ final class SQLiteStorageHelper extends SQLiteOpenHelper implements ModelUpdateS
             sqliteDatabase.setTransactionSuccessful();
         } finally {
             sqliteDatabase.endTransaction();
-        }
-    }
-
-    private void dropAllTables(@NonNull SQLiteDatabase sqliteDatabase) {
-        Objects.requireNonNull(sqliteDatabase);
-        final String queryString = "SELECT name FROM sqlite_master WHERE type='table'";
-        sqliteDatabase.execSQL("PRAGMA foreign_keys = OFF;");
-        try (Cursor cursor = sqliteDatabase.rawQuery(queryString, null)) {
-            Objects.requireNonNull(cursor);
-
-            final Set<String> tablesToDrop = new HashSet<>();
-
-            while (cursor.moveToNext()) {
-                tablesToDrop.add(cursor.getString(0));
-            }
-            sqliteDatabase.beginTransaction();
-            sqliteDatabase.execSQL("PRAGMA foreign_keys = OFF;");
-            for (String table : tablesToDrop) {
-                // Android SQLite creates system tables to store metadata
-                // and all the system tables have the prefix SQLITE_SYSTEM_TABLE_PREFIX.
-                if (table.startsWith(SQLITE_SYSTEM_TABLE_PREFIX)) {
-                    continue;
-                }
-                sqliteDatabase.execSQL("DROP TABLE IF EXISTS " + Wrap.inBackticks(table));
-                LOG.debug("Dropped table: " + table);
-            }
-            sqliteDatabase.execSQL("PRAGMA foreign_keys = ON;");
-            sqliteDatabase.setTransactionSuccessful();
-            sqliteDatabase.endTransaction();
-        } finally {
-            sqliteDatabase.execSQL("PRAGMA foreign_keys = ON;");
         }
     }
 }
