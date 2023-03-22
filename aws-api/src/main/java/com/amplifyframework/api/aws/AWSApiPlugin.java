@@ -57,6 +57,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import okhttp3.Call;
@@ -131,12 +132,13 @@ public final class AWSApiPlugin extends ApiPlugin<Map<String, OkHttpClient>> {
         // Null-check for configuration is done inside readFrom method
         AWSApiPluginConfiguration pluginConfig =
                 AWSApiPluginConfigurationReader.readFrom(pluginConfiguration);
-
+        int READ_TIMEOUT_SEC = 30;
         for (Map.Entry<String, ApiConfiguration> entry : pluginConfig.getApis().entrySet()) {
             final String apiName = entry.getKey();
             final ApiConfiguration apiConfiguration = entry.getValue();
             final EndpointType endpointType = apiConfiguration.getEndpointType();
             final OkHttpClient.Builder okHttpClientBuilder = new OkHttpClient.Builder();
+            okHttpClientBuilder.readTimeout(READ_TIMEOUT_SEC, TimeUnit.SECONDS);
             okHttpClientBuilder.addNetworkInterceptor(UserAgentInterceptor.using(UserAgent::string));
             okHttpClientBuilder.eventListener(new ApiConnectionEventListener());
 
