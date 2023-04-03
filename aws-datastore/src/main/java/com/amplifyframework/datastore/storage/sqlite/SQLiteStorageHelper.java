@@ -52,6 +52,7 @@ final class SQLiteStorageHelper extends SQLiteOpenHelper implements ModelUpdateS
         super(context, databaseName, null, databaseVersion);
         this.createSqlCommands = createSqlCommands;
         this.migrationCommands = migrationCommands;
+        setWriteAheadLoggingEnabled(true);
     }
 
     /**
