@@ -327,45 +327,8 @@ final class PersistentMutationOutbox implements MutationOutbox {
         private Completable handleIncomingUpdate() {
             switch (existing.getMutationType()) {
                 case CREATE:
-                    // Update after the create -> if the incoming & existing is of type SerializedModel
-                    // then merge the existing model.
-                    // If not, then replace the item of the create mutation (and keep it as a create).
-                    // No condition needs to be provided, because as far as the remote store is concerned,
-                    // we're simply performing the create (with the updated item item contents)
-                    if (incoming.getMutatedItem() instanceof SerializedModel
-                            && existing.getMutatedItem() instanceof SerializedModel) {
-                        PendingMutation<T> mergedPendingMutation = mergeAndCreatePendingMutation(
-                                (SerializedModel) incoming.getMutatedItem(),
-                                (SerializedModel) existing.getMutatedItem(),
-                                incoming.getModelSchema(),
-                                PendingMutation.Type.CREATE);
-                        return removeNotLocking(existing.getMutationId())
-                                .andThen(saveAndNotify(mergedPendingMutation));
-                    } else {
-                        return overwriteExistingAndNotify(PendingMutation.Type.CREATE, QueryPredicates.all());
-                    }
                 case UPDATE:
-                    // If the incoming update does not have a condition, we want to delete any
-                    // existing mutations for the modelId before saving the incoming one.
-                    if (QueryPredicates.all().equals(incoming.getPredicate())) {
-                        // If the incoming & existing update is of type serializedModel
-                        // then merge the existing model data into incoming.
-                        if (incoming.getMutatedItem() instanceof SerializedModel
-                                && existing.getMutatedItem() instanceof SerializedModel) {
-                            PendingMutation<T> mergedPendingMutation = mergeAndCreatePendingMutation(
-                                    (SerializedModel) incoming.getMutatedItem(),
-                                    (SerializedModel) existing.getMutatedItem(),
-                                    incoming.getModelSchema(),
-                                    PendingMutation.Type.UPDATE);
-                            return removeNotLocking(existing.getMutationId())
-                                    .andThen(saveAndNotify(mergedPendingMutation));
-                        } else {
-                            return removeNotLocking(existing.getMutationId()).andThen(saveAndNotify(incoming));
-                        }
-                    } else {
-                        // If it has a condition, we want to just add it to the queue
-                        return saveAndNotify(incoming);
-                    }
+                    return saveAndNotify(incoming);
                 case DELETE:
                     // Incoming update after a delete -> throw exception
                     return modelAlreadyScheduledForDeletion();
