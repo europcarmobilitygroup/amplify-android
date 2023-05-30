@@ -29,7 +29,6 @@ import java.util.Objects;
 
 import io.reactivex.rxjava3.core.Observable;
 import io.reactivex.rxjava3.disposables.CompositeDisposable;
-import io.reactivex.rxjava3.schedulers.Schedulers;
 
 /**
  * Observes a {@link LocalStorageAdapter} for its {@link StorageItemChange}s.
@@ -61,8 +60,6 @@ final class StorageObserver {
                 localStorageAdapter.observe(emitter::onNext, emitter::onError, emitter::onComplete);
                 onStarted.call();
             })
-            .subscribeOn(Schedulers.single())
-            .observeOn(Schedulers.single())
             .doOnSubscribe(disposable ->
                 LOG.info("Now observing local storage. Local changes will be enqueued to mutation outbox.")
             )
