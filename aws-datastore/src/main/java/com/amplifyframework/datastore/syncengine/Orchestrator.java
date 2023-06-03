@@ -367,10 +367,6 @@ public final class Orchestrator {
     }
 
     private synchronized void onApiSyncFailure(Throwable exception) {
-        // Don't transition to LOCAL_ONLY, if it's already in progress.
-        if (!State.SYNC_VIA_API.equals(currentState.get())) {
-            return;
-        }
         publishNetworkStatusEvent(false);
         LOG.warn("API sync failed - transitioning to LOCAL_ONLY.", exception);
         Completable.fromAction(this::transitionToLocalOnly)
