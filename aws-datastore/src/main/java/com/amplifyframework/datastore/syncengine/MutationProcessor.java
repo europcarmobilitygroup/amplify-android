@@ -37,7 +37,6 @@ import com.amplifyframework.logging.Logger;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.TimeUnit;
 
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Single;
@@ -51,7 +50,6 @@ import io.reactivex.rxjava3.schedulers.Schedulers;
  */
 final class MutationProcessor {
     private static final Logger LOG = Amplify.Logging.forNamespace("amplify:aws-datastore");
-    private static final long ITEM_PROCESSING_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(10);
 
     private final Merger merger;
     private final VersionRepository versionRepository;
@@ -121,14 +119,8 @@ final class MutationProcessor {
                 return Completable.complete();
             }
             try {
-                boolean itemFailedToProcess = !processOutboxItem(next)
-                    .blockingAwait(ITEM_PROCESSING_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-                if (itemFailedToProcess) {
-                    return Completable.error(new DataStoreException(
-                        "Timeout processing " + next, "Check your internet connection."
-                    ));
-                }
-            } catch (RuntimeException error) {
+                processOutboxItem(next).blockingAwait();
+            } catch (Exception error) {
                 return Completable.error(new DataStoreException(
                         "Failed to process " + error, "Check your internet connection."
                 ));
