@@ -220,6 +220,8 @@ public final class Orchestrator {
             case STOPPED:
                 LOG.info("Orchestrator transitioning from STOPPED to LOCAL_ONLY");
                 startObservingStorageChanges();
+                LOG.info("Setting currentState from " + currentState.get() + " to LOCAL_ONLY");
+                currentState.set(State.LOCAL_ONLY);
                 publishReadyEvent();
                 break;
             case LOCAL_ONLY:
@@ -261,11 +263,7 @@ public final class Orchestrator {
         LOG.info("Starting to observe local storage changes.");
         try {
             mutationOutbox.load()
-                .andThen(Completable.create(emitter -> {
-                    storageObserver.startObservingStorageChanges(emitter::onComplete, () -> stop().subscribe());
-                    LOG.info("Setting currentState from " + currentState.get() + " to LOCAL_ONLY");
-                    currentState.set(State.LOCAL_ONLY);
-                })).blockingAwait();
+                .andThen(Completable.create(emitter -> storageObserver.startObservingStorageChanges(emitter::onComplete, () -> stop().subscribe()))).blockingAwait();
         } catch (Throwable throwable) {
             throw new DataStoreException("Timed out while starting to observe storage changes.",
                 throwable,
@@ -288,8 +286,8 @@ public final class Orchestrator {
      * Start syncing models to and from a remote API.
      */
     private void startApiSync() {
-        LOG.info("Setting currentState from " + currentState.get() + " to SYNC_VIA_API");
         if(currentState.get() == State.SYNC_VIA_API) return;
+        LOG.info("Setting currentState from " + currentState.get() + " to SYNC_VIA_API");
         currentState.set(State.SYNC_VIA_API);
         disposables.add(
             Completable.create(emitter -> {
