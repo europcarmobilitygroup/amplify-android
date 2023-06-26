@@ -220,7 +220,7 @@ public final class Orchestrator {
             case STOPPED:
                 LOG.info("Orchestrator transitioning from STOPPED to LOCAL_ONLY");
                 startObservingStorageChanges();
-                LOG.info("Setting currentState from " + currentState.get() + " to LOCAL_ONLY");
+                LOG.warn("Setting currentState from " + currentState.get() + " to LOCAL_ONLY");
                 currentState.set(State.LOCAL_ONLY);
                 publishReadyEvent();
                 break;
@@ -277,7 +277,7 @@ public final class Orchestrator {
     private void stopObservingStorageChanges() {
         LOG.info("Stopping observation of local storage changes.");
         storageObserver.stopObservingStorageChanges();
-        LOG.info("Setting currentState from " + currentState.get() + " to STOPPED");
+        LOG.warn("Setting currentState from " + currentState.get() + " to STOPPED");
         currentState.set(State.STOPPED);
         publishNetworkStatusEvent(false);
     }
@@ -287,7 +287,7 @@ public final class Orchestrator {
      */
     private void startApiSync() {
         if(currentState.get() == State.SYNC_VIA_API) return;
-        LOG.info("Setting currentState from " + currentState.get() + " to SYNC_VIA_API");
+        LOG.warn("Setting currentState from " + currentState.get() + " to SYNC_VIA_API");
         currentState.set(State.SYNC_VIA_API);
         disposables.add(
             Completable.create(emitter -> {
@@ -381,7 +381,7 @@ public final class Orchestrator {
      */
     private synchronized void stopApiSync() {
         if(currentState.get() != State.STOPPED) {
-            LOG.info("Setting currentState from " + currentState.get() + " to LOCAL_ONLY");
+            LOG.warn("Setting currentState from " + currentState.get() + " to LOCAL_ONLY");
             currentState.set(State.LOCAL_ONLY);
         }
         disposables.clear();

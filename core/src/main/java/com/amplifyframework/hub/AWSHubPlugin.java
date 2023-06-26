@@ -36,6 +36,7 @@ import java.util.concurrent.Executors;
  * an {@link ExecutorService}.
  */
 public final class AWSHubPlugin extends HubPlugin<Void> {
+    private static final int THREAD_COUNT = 1;
     private final Set<Subscription> subscriptions;
     private final ExecutorService executorService;
 
@@ -45,11 +46,11 @@ public final class AWSHubPlugin extends HubPlugin<Void> {
     @SuppressWarnings("WeakerAccess") // This is a public API
     public AWSHubPlugin() {
         this.subscriptions = new HashSet<>();
-        this.executorService = Executors.newCachedThreadPool();
+        this.executorService = Executors.newFixedThreadPool(THREAD_COUNT);
     }
 
     @Override
-    public <T> void publish(@NonNull HubChannel hubChannel, @NonNull HubEvent<T> hubEvent) {
+    synchronized public <T> void publish(@NonNull HubChannel hubChannel, @NonNull HubEvent<T> hubEvent) {
         Objects.requireNonNull(hubChannel);
         Objects.requireNonNull(hubEvent);
         executorService.execute(() -> {

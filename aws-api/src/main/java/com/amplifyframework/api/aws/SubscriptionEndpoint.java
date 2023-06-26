@@ -531,7 +531,7 @@ final class SubscriptionEndpoint {
 
         @Override
         public void onFailure(@NonNull WebSocket webSocket, @NonNull Throwable failure, Response response) {
-            LOG.warn("Websocket connection failed.", failure);
+            LOG.info("Websocket connection failed.");
             endpointStatus.set(EndpointStatus.CONNECTION_FAILED);
             webSocket.cancel();
             // This will free up any pending subscriptions that haven't been established yet.
