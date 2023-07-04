@@ -58,7 +58,7 @@ public final class AWSHubPlugin extends HubPlugin<Void> {
                 for (Subscription subscription : subscriptions) {
                     if (subscription.getHubChannel().equals(hubChannel) &&
                             subscription.getHubEventFilter().filter(hubEvent)) {
-                        executorService.execute(() -> subscription.getHubSubscriber().onEvent(hubEvent));
+                        subscription.getHubSubscriber().onEvent(hubEvent);
                     }
                 }
             }
@@ -190,6 +190,7 @@ public final class AWSHubPlugin extends HubPlugin<Void> {
             return result;
         }
 
+        @NonNull
         @Override
         public String toString() {
             return "Subscription{" +
