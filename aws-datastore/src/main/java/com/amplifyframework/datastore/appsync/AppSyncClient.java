@@ -28,7 +28,6 @@ import com.amplifyframework.api.graphql.GraphQLResponse;
 import com.amplifyframework.api.graphql.PaginatedResult;
 import com.amplifyframework.api.graphql.SubscriptionType;
 import com.amplifyframework.core.Action;
-import com.amplifyframework.core.Amplify;
 import com.amplifyframework.core.Consumer;
 import com.amplifyframework.core.async.Cancelable;
 import com.amplifyframework.core.async.NoOpCancelable;
@@ -37,7 +36,6 @@ import com.amplifyframework.core.model.ModelSchema;
 import com.amplifyframework.core.model.query.predicate.QueryPredicate;
 import com.amplifyframework.core.model.query.predicate.QueryPredicates;
 import com.amplifyframework.datastore.DataStoreException;
-import com.amplifyframework.logging.Logger;
 
 /**
  * An implementation of the {@link AppSync} client interface.
@@ -51,7 +49,6 @@ import com.amplifyframework.logging.Logger;
  * assumptions about the structure of data types (unique IDs, versioning information), etc.
  */
 public final class AppSyncClient implements AppSync {
-    private static final Logger LOG = Amplify.Logging.forNamespace("amplify:aws-datastore");
     private final GraphQLBehavior api;
     private final AuthModeStrategyType authModeStrategyType;
 
@@ -250,6 +247,7 @@ public final class AppSyncClient implements AppSync {
     @Override
     public <T extends Model> Cancelable onCreate(
             @NonNull ModelSchema modelSchema,
+            @NonNull QueryPredicate queryPredicate,
             @NonNull Consumer<String> onSubscriptionStarted,
             @NonNull Consumer<GraphQLResponse<ModelWithMetadata<T>>> onNextResponse,
             @NonNull Consumer<DataStoreException> onSubscriptionFailure,
@@ -257,6 +255,7 @@ public final class AppSyncClient implements AppSync {
         return subscription(
             SubscriptionType.ON_CREATE,
             modelSchema,
+            queryPredicate,
             onSubscriptionStarted,
             onNextResponse,
             onSubscriptionFailure,
@@ -268,6 +267,7 @@ public final class AppSyncClient implements AppSync {
     @Override
     public <T extends Model> Cancelable onUpdate(
             @NonNull ModelSchema modelSchema,
+            @NonNull QueryPredicate queryPredicate,
             @NonNull Consumer<String> onSubscriptionStarted,
             @NonNull Consumer<GraphQLResponse<ModelWithMetadata<T>>> onNextResponse,
             @NonNull Consumer<DataStoreException> onSubscriptionFailure,
@@ -275,6 +275,7 @@ public final class AppSyncClient implements AppSync {
         return subscription(
             SubscriptionType.ON_UPDATE,
             modelSchema,
+            queryPredicate,
             onSubscriptionStarted,
             onNextResponse,
             onSubscriptionFailure,
@@ -286,6 +287,7 @@ public final class AppSyncClient implements AppSync {
     @Override
     public <T extends Model> Cancelable onDelete(
             @NonNull ModelSchema modelSchema,
+            @NonNull QueryPredicate queryPredicate,
             @NonNull Consumer<String> onSubscriptionStarted,
             @NonNull Consumer<GraphQLResponse<ModelWithMetadata<T>>> onNextResponse,
             @NonNull Consumer<DataStoreException> onSubscriptionFailure,
@@ -293,6 +295,7 @@ public final class AppSyncClient implements AppSync {
         return subscription(
             SubscriptionType.ON_DELETE,
             modelSchema,
+            queryPredicate,
             onSubscriptionStarted,
             onNextResponse,
             onSubscriptionFailure,
@@ -303,6 +306,7 @@ public final class AppSyncClient implements AppSync {
     private <T extends Model> Cancelable subscription(
             SubscriptionType subscriptionType,
             ModelSchema modelSchema,
+            @NonNull QueryPredicate queryPredicate,
             Consumer<String> onSubscriptionStarted,
             Consumer<GraphQLResponse<ModelWithMetadata<T>>> onNextResponse,
             Consumer<DataStoreException> onSubscriptionFailure,
@@ -311,6 +315,7 @@ public final class AppSyncClient implements AppSync {
         try {
             request = AppSyncRequestFactory.buildSubscriptionRequest(modelSchema,
                                                                      subscriptionType,
+                                                                     queryPredicate,
                                                                      authModeStrategyType);
         } catch (DataStoreException requestGenerationException) {
             onSubscriptionFailure.accept(requestGenerationException);

@@ -183,9 +183,11 @@ final class SubscriptionProcessor {
                                    ModelSchema modelSchema) {
         return Observable.<GraphQLResponse<ModelWithMetadata<T>>>create(emitter -> {
             SubscriptionMethod method = subscriptionMethodFor(appSync, subscriptionType);
+            QueryPredicate predicate = queryPredicateProvider.getPredicate(modelSchema.getName());
             AtomicReference<String> subscriptionId = new AtomicReference<>();
             Cancelable cancelable = method.subscribe(
                 modelSchema,
+                predicate,
                 token -> {
                     LOG.debug("Subscription started for " + subscriptionType.name() + " " + modelSchema.getName() +
                             " subscriptionId: " + token);
@@ -338,6 +340,7 @@ final class SubscriptionProcessor {
     interface SubscriptionMethod {
         <T extends Model> Cancelable subscribe(
                 @NonNull ModelSchema modelSchema,
+                @NonNull QueryPredicate queryPredicate,
                 @NonNull Consumer<String> onStart,
                 @NonNull Consumer<GraphQLResponse<ModelWithMetadata<T>>> onResponse,
                 @NonNull Consumer<DataStoreException> onFailure,

@@ -196,6 +196,7 @@ public interface AppSync {
     @NonNull
     <T extends Model> Cancelable onCreate(
             @NonNull ModelSchema modelSchema,
+            @NonNull QueryPredicate queryPredicate,
             @NonNull Consumer<String> onSubscriptionStarted,
             @NonNull Consumer<GraphQLResponse<ModelWithMetadata<T>>> onNextResponse,
             @NonNull Consumer<DataStoreException> onSubscriptionFailure,
@@ -220,6 +221,7 @@ public interface AppSync {
     @NonNull
     <T extends Model> Cancelable onUpdate(
             @NonNull ModelSchema modelSchema,
+            @NonNull QueryPredicate queryPredicate,
             @NonNull Consumer<String> onSubscriptionStarted,
             @NonNull Consumer<GraphQLResponse<ModelWithMetadata<T>>> onNextResponse,
             @NonNull Consumer<DataStoreException> onSubscriptionFailure,
@@ -244,6 +246,7 @@ public interface AppSync {
     @NonNull
     <T extends Model> Cancelable onDelete(
             @NonNull ModelSchema modelSchema,
+            @NonNull QueryPredicate queryPredicate,
             @NonNull Consumer<String> onSubscriptionStarted,
             @NonNull Consumer<GraphQLResponse<ModelWithMetadata<T>>> onNextResponse,
             @NonNull Consumer<DataStoreException> onSubscriptionFailure,
