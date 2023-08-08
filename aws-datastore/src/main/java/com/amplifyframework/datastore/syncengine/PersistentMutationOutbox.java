@@ -37,9 +37,6 @@ import com.amplifyframework.logging.Logger;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.ThreadPoolExecutor;
 
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Maybe;
@@ -64,9 +61,6 @@ final class PersistentMutationOutbox implements MutationOutbox {
     private final Set<TimeBasedUuid> inFlightMutations;
     private final PendingMutation.Converter converter;
     private final Subject<OutboxEvent> events;
-    private final Semaphore semaphore;
-    private final ThreadPoolExecutor notifyExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
-
     PersistentMutationOutbox(@NonNull final LocalStorageAdapter localStorageAdapter) {
         this(localStorageAdapter, new MutationQueue());
     }
@@ -79,7 +73,6 @@ final class PersistentMutationOutbox implements MutationOutbox {
         this.inFlightMutations = new HashSet<>();
         this.converter = new GsonPendingMutationConverter();
         this.events = PublishSubject.<OutboxEvent>create().toSerialized();
-        this.semaphore = new Semaphore(1);
     }
 
     @Override
@@ -104,9 +97,7 @@ final class PersistentMutationOutbox implements MutationOutbox {
             } else {
                 return resolveConflict(existingMutation, incomingMutation);
             }
-        })
-        .doOnSubscribe(disposable -> semaphore.acquire())
-        .doOnTerminate(semaphore::release);
+        });
     }
 
     private <T extends Model> Completable resolveConflict(@NonNull PendingMutation<T> existingMutation,
@@ -141,9 +132,7 @@ final class PersistentMutationOutbox implements MutationOutbox {
     @NonNull
     @Override
     public Completable remove(@NonNull TimeBasedUuid pendingMutationId) {
-        return removeNotLocking(pendingMutationId)
-            .doOnSubscribe(disposable -> semaphore.acquire())
-            .doOnTerminate(semaphore::release);
+        return removeNotLocking(pendingMutationId);
     }
 
     @NonNull
@@ -204,9 +193,7 @@ final class PersistentMutationOutbox implements MutationOutbox {
                 },
                 emitter::onError
             );
-        })
-        .doOnSubscribe(disposable -> semaphore.acquire())
-        .doOnTerminate(semaphore::release);
+        });
     }
 
     @NonNull
@@ -216,10 +203,7 @@ final class PersistentMutationOutbox implements MutationOutbox {
     }
 
     private Completable notifyContentAvailable() {
-        if(notifyExecutor.getQueue().isEmpty()){
-            notifyExecutor.submit(() -> events.onNext(OutboxEvent.CONTENT_AVAILABLE));
-        }
-        return Completable.complete();
+        return Completable.fromAction(()-> events.onNext(OutboxEvent.CONTENT_AVAILABLE));
     }
 
     @Nullable
