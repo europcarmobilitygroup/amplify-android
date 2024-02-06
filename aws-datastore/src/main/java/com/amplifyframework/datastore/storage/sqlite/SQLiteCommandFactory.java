@@ -37,6 +37,7 @@ import com.amplifyframework.datastore.storage.sqlite.adapter.SQLPredicate;
 import com.amplifyframework.datastore.storage.sqlite.adapter.SQLiteColumn;
 import com.amplifyframework.datastore.storage.sqlite.adapter.SQLiteTable;
 import com.amplifyframework.logging.Logger;
+import com.amplifyframework.util.Casing;
 import com.amplifyframework.util.Empty;
 import com.amplifyframework.util.Immutable;
 import com.amplifyframework.util.Wrap;
@@ -104,10 +105,19 @@ final class SQLiteCommandFactory implements SQLCommandFactory {
         Set<SqlCommand> indexCommands = new HashSet<>();
 
         for (ModelIndex modelIndex : modelSchema.getIndexes().values()) {
+            String indexName = modelIndex.getIndexName();
+            String createIndexCommand = "CREATE INDEX IF NOT EXISTS";
+            if(indexName.equals("undefined")) { //primary index
+                String snakeCaseModelName = Casing.from(Casing.CaseType.CAMEL_CASE)
+                        .to(Casing.CaseType.SCREAMING_SNAKE_CASE)
+                        .convert(modelSchema.getName()).toLowerCase();
+                indexName = "idx_" + snakeCaseModelName + "_pk";
+                createIndexCommand = "CREATE UNIQUE INDEX IF NOT EXISTS";
+            }
             final StringBuilder stringBuilder = new StringBuilder();
-            stringBuilder.append("CREATE INDEX IF NOT EXISTS")
+            stringBuilder.append(createIndexCommand)
                     .append(SqlKeyword.DELIMITER)
-                    .append(Wrap.inBackticks(modelIndex.getIndexName()))
+                    .append(Wrap.inBackticks(indexName))
                     .append(SqlKeyword.DELIMITER)
                     .append(SqlKeyword.ON)
                     .append(SqlKeyword.DELIMITER)
