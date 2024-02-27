@@ -99,16 +99,14 @@ final class Merger {
                 // and the version would get bumped up.
                 .filter(currentVersion -> currentVersion == -1 || incomingVersion > currentVersion)
                 // If we should merge, then do so now, starting with the model data.
-                .flatMapCompletable(shouldMerge -> {
-                    Completable firstStep;
+                .flatMapCompletable(shouldMerge -> {;
                     if (mutationOutbox.hasPendingMutation(model.getId())) {
                         LOG.info("Mutation outbox has pending mutation for " + model.getId()
                             + ". Saving the metadata, but not model itself.");
-                        firstStep = Completable.complete();
+                        return save(metadata, NoOpConsumer.create());
                     } else {
-                        firstStep = (isDelete ? delete(model, changeTypeConsumer) : save(model, changeTypeConsumer));
+                        return (isDelete ? delete(model, changeTypeConsumer).andThen(delete(metadata, changeTypeConsumer)) : save(model, changeTypeConsumer).andThen(save(metadata, NoOpConsumer.create())));
                     }
-                    return firstStep.andThen(save(metadata, NoOpConsumer.create()));
                 })
                 // Let the world know that we've done a good thing.
                 .doOnComplete(() -> {
