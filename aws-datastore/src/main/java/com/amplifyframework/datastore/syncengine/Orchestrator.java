@@ -313,6 +313,11 @@ public final class Orchestrator {
                 }
                 publishNetworkStatusEvent(true);
 
+                LOG.debug("Draining outbox...");
+                mutationProcessor.startDrainingMutationOutbox();
+
+                subscriptionProcessor.startDrainingMutationBuffer();
+
                 long startTime = System.currentTimeMillis();
                 LOG.debug("About to hydrate...");
                 try {
@@ -331,11 +336,6 @@ public final class Orchestrator {
                     }
                     return;
                 }
-
-                LOG.debug("Draining outbox...");
-                mutationProcessor.startDrainingMutationOutbox();
-
-                subscriptionProcessor.startDrainingMutationBuffer();
 
                 emitter.onComplete();
             })
