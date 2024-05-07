@@ -90,6 +90,20 @@ public interface LocalStorageAdapter {
     );
 
     /**
+     * Save an item into local storage only if the data being overwritten meets the
+     * specific conditions. It will use the same thread the function is called on.
+     * @param <T> The type of the item being stored
+     * @param item the item to save into the repository
+     * @param initiator An identification of the actor who initiated this save
+     * @param predicate Predicate condition for conditional write
+     */
+    <T extends Model> StorageItemChange<T> saveInternal(
+            @NonNull T item,
+            @NonNull StorageItemChange.Initiator initiator,
+            @NonNull QueryPredicate predicate
+    ) throws DataStoreException;
+
+    /**
      * Query the storage for items of a given type with specific conditions.
      * @param itemClass Items that have this class will be solicited
      * @param options options, such as predicates, pagination to apply to query

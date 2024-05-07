@@ -109,24 +109,20 @@ final class PersistentMutationOutbox implements MutationOutbox {
 
     private <T extends Model> Completable save(PendingMutation<T> pendingMutation) {
         PendingMutation.PersistentRecord item = converter.toRecord(pendingMutation);
-        return Completable.create(emitter -> storage.save(
-                item,
-            StorageItemChange.Initiator.SYNC_ENGINE,
-            QueryPredicates.all(),
-            saved -> {
-                // The return value is StorageItemChange, referring to a PersistentRecord
-                // that was saved. We could "unwrap" a PendingMutation from that PersistentRecord,
-                // to get identically the thing that was saved. But we know the save succeeded.
-                // So, let's skip the unwrapping, and use the thing that was enqueued,
-                // the pendingMutation, directly.
-                mutationQueue.updateExistingQueueItemOrAppendNew(pendingMutation.getMutationId(), pendingMutation);
-                LOG.info("Successfully enqueued " + pendingMutation);
-                announceEventEnqueued(pendingMutation);
-                publishCurrentOutboxStatus();
-                emitter.onComplete();
-            },
-            emitter::onError
-        ));
+        try {
+            storage.saveInternal(
+                    item,
+                    StorageItemChange.Initiator.SYNC_ENGINE,
+                    QueryPredicates.all()
+            );
+            mutationQueue.updateExistingQueueItemOrAppendNew(pendingMutation.getMutationId(), pendingMutation);
+            LOG.info("Successfully enqueued " + pendingMutation);
+            announceEventEnqueued(pendingMutation);
+            publishCurrentOutboxStatus();
+            return Completable.complete();
+        } catch (DataStoreException e) {
+            return Completable.error(e);
+        }
     }
 
     @NonNull

@@ -324,6 +324,74 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
             }
         });
     }
+    @Override
+    public <T extends Model> StorageItemChange<T> saveInternal(
+            @NonNull T item,
+            @NonNull StorageItemChange.Initiator initiator,
+            @NonNull QueryPredicate predicate) throws DataStoreException {
+
+        Objects.requireNonNull(item);
+        Objects.requireNonNull(initiator);
+        Objects.requireNonNull(predicate);
+
+        try {
+            final ModelSchema modelSchema = schemaRegistry.getModelSchemaForModelClass(item.getModelName());
+
+            final StorageItemChange.Type writeType;
+            SerializedModel patchItem = null;
+
+            if (sqlQueryProcessor.modelExists(item, QueryPredicates.all())) {
+                // if data exists already, then UPDATE the row
+                writeType = StorageItemChange.Type.UPDATE;
+
+                // Check if existing data meets the condition, only if a condition other than all() was provided.
+                if (!QueryPredicates.all().equals(predicate) && !sqlQueryProcessor.modelExists(item, predicate)) {
+                    throw new DataStoreException(
+                            "Save failed because condition did not match existing model instance.",
+                            "The save will continue to fail until the model instance is updated."
+                    );
+                }
+                if (initiator == StorageItemChange.Initiator.DATA_STORE_API) {
+                    // When saving items via the DataStore API, compute a SerializedModel of the changed model.
+                    // This is not necessary when save
+                    // is initiated by the sync engine, so skip it for optimization to avoid the extra SQL query.
+                    patchItem = SerializedModel.create(item, modelSchema);
+                }
+            } else if (!QueryPredicates.all().equals(predicate)) {
+                // insert not permitted with a condition
+                throw new DataStoreException(
+                        "Conditional update must be performed against an already existing data. " +
+                                "Insertion is not permitted while using a predicate.",
+                        "Please save without specifying a predicate."
+                );
+            } else {
+                // if data doesn't exist yet, then INSERT a new row
+                writeType = StorageItemChange.Type.CREATE;
+            }
+
+            // execute local save
+            writeData(item, writeType);
+            // publish successful save
+            StorageItemChange<T> change = StorageItemChange.<T>builder()
+                    .item(item)
+                    .patchItem(patchItem != null ? patchItem : SerializedModel.create(item, modelSchema))
+                    .modelSchema(modelSchema)
+                    .type(writeType)
+                    .predicate(predicate)
+                    .initiator(initiator)
+                    .build();
+            itemChangeSubject.onNext(change);
+            return change;
+        } catch (DataStoreException dataStoreException) {
+            throw dataStoreException;
+        } catch (Exception someOtherTypeOfException) {
+            String modelToString = item.getModelName() + "[id=" + item.getId() + "]";
+            throw new DataStoreException(
+                    "Error in saving the model: " + modelToString,
+                    someOtherTypeOfException, "See attached exception for details."
+            );
+        }
+    }
 
     /**
      * {@inheritDoc}
@@ -340,66 +408,13 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
         Objects.requireNonNull(predicate);
         Objects.requireNonNull(onSuccess);
         Objects.requireNonNull(onError);
+
         threadPool.submit(() -> {
-            try {
-                final ModelSchema modelSchema = schemaRegistry.getModelSchemaForModelClass(item.getModelName());
-
-                final StorageItemChange.Type writeType;
-                SerializedModel patchItem = null;
-
-                if (sqlQueryProcessor.modelExists(item, QueryPredicates.all())) {
-                    // if data exists already, then UPDATE the row
-                    writeType = StorageItemChange.Type.UPDATE;
-
-                    // Check if existing data meets the condition, only if a condition other than all() was provided.
-                    if (!QueryPredicates.all().equals(predicate) && !sqlQueryProcessor.modelExists(item, predicate)) {
-                        throw new DataStoreException(
-                            "Save failed because condition did not match existing model instance.",
-                            "The save will continue to fail until the model instance is updated."
-                        );
-                    }
-                    if (initiator == StorageItemChange.Initiator.DATA_STORE_API) {
-                        // When saving items via the DataStore API, compute a SerializedModel of the changed model.
-                        // This is not necessary when save
-                        // is initiated by the sync engine, so skip it for optimization to avoid the extra SQL query.
-                        patchItem = SerializedModel.create(item, modelSchema);
-                    }
-                } else if (!QueryPredicates.all().equals(predicate)) {
-                    // insert not permitted with a condition
-                    throw new DataStoreException(
-                        "Conditional update must be performed against an already existing data. " +
-                            "Insertion is not permitted while using a predicate.",
-                        "Please save without specifying a predicate."
-                    );
-                } else {
-                    // if data doesn't exist yet, then INSERT a new row
-                    writeType = StorageItemChange.Type.CREATE;
-                }
-
-                // execute local save
-                writeData(item, writeType);
-
-                // publish successful save
-                StorageItemChange<T> change = StorageItemChange.<T>builder()
-                        .item(item)
-                        .patchItem(patchItem != null ? patchItem : SerializedModel.create(item, modelSchema))
-                        .modelSchema(modelSchema)
-                        .type(writeType)
-                        .predicate(predicate)
-                        .initiator(initiator)
-                        .build();
-                itemChangeSubject.onNext(change);
-                onSuccess.accept(change);
-            } catch (DataStoreException dataStoreException) {
-                onError.accept(dataStoreException);
-            } catch (Exception someOtherTypeOfException) {
-                String modelToString = item.getModelName() + "[id=" + item.getId() + "]";
-                DataStoreException dataStoreException = new DataStoreException(
-                    "Error in saving the model: " + modelToString,
-                    someOtherTypeOfException, "See attached exception for details."
-                );
-                onError.accept(dataStoreException);
-            }
+           try{
+               onSuccess.accept(saveInternal(item, initiator, predicate));
+           }catch (DataStoreException ex){
+               onError.accept(ex);
+           }
         });
     }
 
