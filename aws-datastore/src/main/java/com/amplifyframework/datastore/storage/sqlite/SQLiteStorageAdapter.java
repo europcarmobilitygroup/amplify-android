@@ -859,9 +859,6 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
                     Objects.requireNonNull(sqliteStorageHelper);
                     Objects.requireNonNull(databaseConnectionHandle);
                     sqliteStorageHelper.update(databaseConnectionHandle, oldVersion, newVersion);
-                } else {
-                    LOG.debug("Database up to date. Checking ModelMetadata.");
-                    new ModelMigrations(databaseConnectionHandle, modelsProvider).apply();
                 }
             }
             PersistentModelVersion persistentModelVersion = new PersistentModelVersion(modelsProvider.version());
