@@ -18,6 +18,7 @@ package com.amplifyframework.datastore.storage.sqlite;
 import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.core.util.ObjectsCompat;
@@ -52,11 +53,9 @@ import com.amplifyframework.datastore.storage.LocalStorageAdapter;
 import com.amplifyframework.datastore.storage.StorageItemChange;
 import com.amplifyframework.datastore.storage.sqlite.adapter.SQLiteTable;
 import com.amplifyframework.datastore.storage.sqlite.migrations.MigrationConfiguration;
-import com.amplifyframework.datastore.storage.sqlite.migrations.ModelMigrations;
 import com.amplifyframework.logging.Logger;
 import com.amplifyframework.util.GsonFactory;
 import com.amplifyframework.util.Immutable;
-
 import com.google.gson.Gson;
 
 import java.util.ArrayList;
@@ -844,9 +843,6 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
                     Objects.requireNonNull(sqliteStorageHelper);
                     Objects.requireNonNull(databaseConnectionHandle);
                     sqliteStorageHelper.update(databaseConnectionHandle, oldVersion, newVersion);
-                } else {
-                    LOG.debug("Database up to date. Checking ModelMetadata.");
-                    new ModelMigrations(databaseConnectionHandle, modelsProvider).apply();
                 }
             }
             PersistentModelVersion persistentModelVersion = new PersistentModelVersion(modelsProvider.version());
