@@ -72,7 +72,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import io.reactivex.rxjava3.core.Completable;
-import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.disposables.CompositeDisposable;
 import io.reactivex.rxjava3.disposables.Disposable;
 import io.reactivex.rxjava3.subjects.PublishSubject;
@@ -85,9 +84,7 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
     private static final Logger LOG = Amplify.Logging.forNamespace("amplify:aws-datastore");
     private static final long THREAD_POOL_TERMINATE_TIMEOUT = TimeUnit.SECONDS.toMillis(5);
 
-    // Thread pool size is determined as number of processors multiplied by this value.  We want to allow more threads
-    // than available processors to parallelize primarily IO bound work, but still provide a limit to avoid out of
-    // memory errors.
+    //Don't increase the thread pool size, it will create more problem than helps.
     private static final int THREAD_POOL_SIZE = 1;
 
     @VisibleForTesting @SuppressWarnings("checkstyle:all") // Keep logger first
@@ -106,8 +103,11 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
     private final SchemaRegistry schemaRegistry;
     private final MigrationConfiguration migrationConfiguration;
 
-    // ThreadPool for SQLite operations.
-    private ExecutorService threadPool;
+    // ThreadPool for syncEngine SQLite operations.
+    private ExecutorService syncEngineThreadPool;
+
+    // ThreadPool for dataStore SQLite operations.
+    private ExecutorService dataStoreThreadPool;
 
     // Data is read from SQLite and de-serialized using GSON
     // into a strongly typed Java object.
@@ -200,30 +200,6 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
     }
 
     /**
-     * Gets a SQLiteStorageAdapter that can be initialized to use the provided models.
-     * @param schemaRegistry Registry of schema for all models and custom types in the system
-     * @param userModelsProvider A provider of models that will be represented in SQL
-     * @param databaseName Name of the SQLite database.
-     * @return A SQLiteStorageAdapter that will host the provided models in SQL tables
-     */
-    @NonNull
-    static SQLiteStorageAdapter forModels(
-        @NonNull SchemaRegistry schemaRegistry,
-        @NonNull ModelProvider userModelsProvider,
-        @NonNull String databaseName,
-        int databaseVersion,
-        MigrationConfiguration migrationConfiguration) {
-        return new SQLiteStorageAdapter(
-            schemaRegistry,
-            Objects.requireNonNull(userModelsProvider),
-            SystemModelsProviderFactory.create(),
-            databaseName,
-            databaseVersion,
-            migrationConfiguration
-        );
-    }
-
-    /**
      * {@inheritDoc}
      */
     @Override
@@ -237,10 +213,11 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
         Objects.requireNonNull(onError);
         // Create a thread pool large enough to take advantage of parallelization, but small enough to avoid
         // OutOfMemoryError and CursorWindowAllocationException issues.
-        this.threadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
+        this.syncEngineThreadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
+        this.dataStoreThreadPool = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
         this.context = context;
         this.dataStoreConfiguration = dataStoreConfiguration;
-        threadPool.submit(() -> {
+        syncEngineThreadPool.submit(() -> {
             try {
                 /*
                  * Start with a fresh registry.
@@ -392,6 +369,10 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
         }
     }
 
+    private ExecutorService getThreadPool(StorageItemChange.Initiator initiator){
+        if(initiator.equals(StorageItemChange.Initiator.SYNC_ENGINE)) return syncEngineThreadPool; else return dataStoreThreadPool;
+    }
+
     /**
      * {@inheritDoc}
      */
@@ -408,7 +389,7 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
         Objects.requireNonNull(onSuccess);
         Objects.requireNonNull(onError);
 
-        threadPool.submit(() -> {
+        getThreadPool(initiator).submit(() -> {
            try{
                onSuccess.accept(saveInternal(item, initiator, predicate));
            }catch (DataStoreException ex){
@@ -423,14 +404,17 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
     @Override
     public <T extends Model> void query(
             @NonNull Class<T> itemClass,
+            @NonNull StorageItemChange.Initiator initiator,
             @NonNull QueryOptions options,
             @NonNull Consumer<Iterator<T>> onSuccess,
             @NonNull Consumer<DataStoreException> onError) {
         Objects.requireNonNull(itemClass);
+        Objects.requireNonNull(initiator);
         Objects.requireNonNull(options);
         Objects.requireNonNull(onSuccess);
         Objects.requireNonNull(onError);
-        threadPool.submit(() -> {
+
+        getThreadPool(initiator).submit(() -> {
             List<T> models = sqlQueryProcessor.queryOfflineData(itemClass, options, onError);
             onSuccess.accept(models.iterator());
         });
@@ -442,15 +426,17 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
     @Override
     public void query(
             @NonNull String modelName,
+            @NonNull StorageItemChange.Initiator initiator,
             @NonNull QueryOptions options,
             @NonNull Consumer<Iterator<? extends Model>> onSuccess,
             @NonNull Consumer<DataStoreException> onError) {
         Objects.requireNonNull(modelName);
+        Objects.requireNonNull(initiator);
         Objects.requireNonNull(options);
         Objects.requireNonNull(onSuccess);
         Objects.requireNonNull(onError);
 
-        threadPool.submit(() -> {
+        getThreadPool(initiator).submit(() -> {
             final ModelSchema modelSchema = schemaRegistry.getModelSchemaForModelClass(modelName);
             try (Cursor cursor = sqlCommandProcessor.rawQuery(sqlCommandFactory.queryFor(modelSchema, options))) {
                 LOG.debug("Querying item for: " + modelName);
@@ -500,7 +486,8 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
         Objects.requireNonNull(predicate);
         Objects.requireNonNull(onSuccess);
         Objects.requireNonNull(onError);
-        threadPool.submit(() -> {
+
+        getThreadPool(initiator).submit(() -> {
             try {
                 final String modelName = item.getModelName();
                 final ModelSchema modelSchema = schemaRegistry.getModelSchemaForModelClass(modelName);
@@ -587,7 +574,7 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
         Objects.requireNonNull(onSuccess);
         Objects.requireNonNull(onError);
 
-        threadPool.submit(() -> {
+        getThreadPool(initiator).submit(() -> {
             final ModelSchema modelSchema = schemaRegistry.getModelSchemaForModelClass(itemClass);
             QueryOptions options = Where.matches(predicate);
             try (Cursor cursor = sqlCommandProcessor.rawQuery(sqlCommandFactory.queryFor(modelSchema, options))) {
@@ -685,7 +672,7 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
         Objects.requireNonNull(onObservationError);
         Objects.requireNonNull(onObservationComplete);
         new ObserveQueryExecutor<>(itemChangeSubject, sqlQueryProcessor,
-                threadPool,
+                syncEngineThreadPool,
                 syncStatus,
                 new ModelSorter<T>(),
                 dataStoreConfiguration)
@@ -709,8 +696,11 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
             if (itemChangeSubject != null) {
                 itemChangeSubject.onComplete();
             }
-            if (threadPool != null) {
-                threadPool.shutdown();
+            if (syncEngineThreadPool != null) {
+                syncEngineThreadPool.shutdown();
+            }
+            if(dataStoreThreadPool != null) {
+                dataStoreThreadPool.shutdown();
             }
             if (databaseConnectionHandle != null) {
                 databaseConnectionHandle.close();
@@ -732,9 +722,13 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
                                    @NonNull Consumer<DataStoreException> onError) {
         try {
             LOG.debug("Shutting down thread pool for the storage adapter.");
-            threadPool.shutdown();
-            if (!threadPool.awaitTermination(THREAD_POOL_TERMINATE_TIMEOUT, TimeUnit.MILLISECONDS)) {
-                threadPool.shutdownNow();
+            dataStoreThreadPool.shutdown();
+            if (!dataStoreThreadPool.awaitTermination(THREAD_POOL_TERMINATE_TIMEOUT, TimeUnit.MILLISECONDS)) {
+                dataStoreThreadPool.shutdownNow();
+            }
+            syncEngineThreadPool.shutdown();
+            if (!syncEngineThreadPool.awaitTermination(THREAD_POOL_TERMINATE_TIMEOUT, TimeUnit.MILLISECONDS)) {
+                syncEngineThreadPool.shutdownNow();
             }
             LOG.debug("Storage adapter thread pool shutdown.");
         } catch (InterruptedException exception) {
@@ -804,40 +798,6 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
                     "Valid storage changes are CREATE, UPDATE, and DELETE."
                 );
         }
-    }
-
-    private boolean modelExists(Model model, QueryPredicate predicate) throws DataStoreException {
-        final String modelName = model.getModelName();
-        final ModelSchema schema = schemaRegistry.getModelSchemaForModelClass(modelName);
-        final SQLiteTable table = SQLiteTable.fromSchema(schema);
-        final String tableName = table.getName();
-        final String primaryKeyName = table.getPrimaryKey().getName();
-        final QueryPredicate matchId = QueryField.field(tableName, primaryKeyName).eq(model.getId());
-        final QueryPredicate condition = predicate.and(matchId);
-        return sqlCommandProcessor.executeExists(sqlCommandFactory.existsFor(schema, condition));
-    }
-
-    /**
-     * Helper method to synchronously query for a single model instance.  Used before any save initiated by
-     * DATASTORE_API in order to determine which fields have changed.
-     * @param model a Model that we want to query for the same type and id in SQLite.
-     * @return the Model instance from SQLite, if it exists, otherwise null.
-     */
-    private Model query(Model model) {
-        final String modelName = model.getModelName();
-        final ModelSchema schema = schemaRegistry.getModelSchemaForModelClass(modelName);
-        final SQLiteTable table = SQLiteTable.fromSchema(schema);
-        final String primaryKeyName = table.getPrimaryKey().getName();
-        final QueryPredicate matchId = QueryField.field(modelName, primaryKeyName).eq(model.getId());
-
-        Iterator<? extends Model> result = Single.<Iterator<? extends Model>>create(emitter -> {
-            if (model instanceof SerializedModel) {
-                query(model.getModelName(), Where.matches(matchId), emitter::onSuccess, emitter::onError);
-            } else {
-                query(model.getClass(), Where.matches(matchId), emitter::onSuccess, emitter::onError);
-            }
-        }).blockingGet();
-        return result.hasNext() ? result.next() : null;
     }
 
     /*

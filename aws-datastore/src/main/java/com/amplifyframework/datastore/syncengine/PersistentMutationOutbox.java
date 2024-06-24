@@ -172,7 +172,7 @@ final class PersistentMutationOutbox implements MutationOutbox {
         return Completable.create(emitter -> {
             inFlightMutations.clear();
             mutationQueue.clear();
-            storage.query(PendingMutation.PersistentRecord.class, Where.matchesAll(),
+            storage.query(PendingMutation.PersistentRecord.class, StorageItemChange.Initiator.SYNC_ENGINE, Where.matchesAll(),
                 results -> {
                     while (results.hasNext()) {
                         try {

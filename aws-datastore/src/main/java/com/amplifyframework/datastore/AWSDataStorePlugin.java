@@ -462,7 +462,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull Class<T> itemClass,
             @NonNull Consumer<Iterator<T>> onQueryResults,
             @NonNull Consumer<DataStoreException> onQueryFailure) {
-        checkAndStart(()-> sqliteStorageAdapter.query(itemClass, Where.matchesAll(), onQueryResults, onQueryFailure), onQueryFailure);
+        checkAndStart(()-> sqliteStorageAdapter.query(itemClass, StorageItemChange.Initiator.DATA_STORE_API, Where.matchesAll(), onQueryResults, onQueryFailure), onQueryFailure);
     }
 
     /**
@@ -479,7 +479,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull QueryOptions options,
             @NonNull Consumer<Iterator<? extends Model>> onQueryResults,
             @NonNull Consumer<DataStoreException> onQueryFailure) {
-        checkAndStart(()-> sqliteStorageAdapter.query(modelName, options, onQueryResults, onQueryFailure), onQueryFailure);
+        checkAndStart(()-> sqliteStorageAdapter.query(modelName, StorageItemChange.Initiator.DATA_STORE_API, options, onQueryResults, onQueryFailure), onQueryFailure);
     }
 
     /**
@@ -500,7 +500,7 @@ public final class AWSDataStorePlugin extends DataStorePlugin<Void> {
             @NonNull QueryOptions options,
             @NonNull Consumer<Iterator<T>> onQueryResults,
             @NonNull Consumer<DataStoreException> onQueryFailure) {
-        checkAndStart(()-> sqliteStorageAdapter.query(itemClass, options, onQueryResults, onQueryFailure), onQueryFailure);
+        checkAndStart(()-> sqliteStorageAdapter.query(itemClass, StorageItemChange.Initiator.DATA_STORE_API, options, onQueryResults, onQueryFailure), onQueryFailure);
     }
 
     @Override

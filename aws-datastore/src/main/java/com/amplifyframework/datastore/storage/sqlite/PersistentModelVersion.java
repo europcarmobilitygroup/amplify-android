@@ -72,6 +72,7 @@ public final class PersistentModelVersion implements Model {
         return Single.create(emitter ->
             localStorageAdapter.query(
                 PersistentModelVersion.class,
+                StorageItemChange.Initiator.SYNC_ENGINE,
                 Where.matchesAll(),
                 emitter::onSuccess,
                 emitter::onError

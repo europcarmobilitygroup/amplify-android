@@ -106,6 +106,7 @@ public interface LocalStorageAdapter {
     /**
      * Query the storage for items of a given type with specific conditions.
      * @param itemClass Items that have this class will be solicited
+     * @param initiator An identification of the actor who initiated this save
      * @param options options, such as predicates, pagination to apply to query
      * @param onSuccess A callback that will be notified if the query succeeds
      * @param onError A callback that will be notified if the query fails with an error
@@ -113,6 +114,7 @@ public interface LocalStorageAdapter {
      */
     <T extends Model> void query(
             @NonNull Class<T> itemClass,
+            @NonNull StorageItemChange.Initiator initiator,
             @NonNull QueryOptions options,
             @NonNull Consumer<Iterator<T>> onSuccess,
             @NonNull Consumer<DataStoreException> onError
@@ -121,12 +123,14 @@ public interface LocalStorageAdapter {
     /**
      * Query the storage for items of a given type with specific conditions.
      * @param modelName name of the Model to query
+     * @param initiator An identification of the actor who initiated this save
      * @param options options, such as predicates, pagination to apply to query
      * @param onSuccess A callback that will be notified if the query succeeds
      * @param onError A callback that will be notified if the query fails with an error
      */
     void query(
             @NonNull String modelName,
+            @NonNull StorageItemChange.Initiator initiator,
             @NonNull QueryOptions options,
             @NonNull Consumer<Iterator<? extends Model>> onSuccess,
             @NonNull Consumer<DataStoreException> onError

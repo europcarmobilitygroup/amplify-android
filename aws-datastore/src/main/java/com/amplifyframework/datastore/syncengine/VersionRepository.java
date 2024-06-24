@@ -22,6 +22,7 @@ import com.amplifyframework.core.model.query.Where;
 import com.amplifyframework.datastore.DataStoreException;
 import com.amplifyframework.datastore.appsync.ModelMetadata;
 import com.amplifyframework.datastore.storage.LocalStorageAdapter;
+import com.amplifyframework.datastore.storage.StorageItemChange;
 
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -57,6 +58,7 @@ final class VersionRepository {
             // The ModelMetadata for the model uses the same ID as an identifier.
             localStorageAdapter.query(
                 ModelMetadata.class,
+                StorageItemChange.Initiator.SYNC_ENGINE,
                 Where.id(model.getModelName() + "|" + model.getId()),
                 iterableResults -> {
                     try {

@@ -44,7 +44,7 @@ final class SyncTimeRegistry {
         return Single.create(emitter -> {
             QueryPredicate hasMatchingModelClassName = QueryField.field("modelClassName").eq(modelClassName);
 
-            localStorageAdapter.query(LastSyncMetadata.class, Where.matches(hasMatchingModelClassName), results -> {
+            localStorageAdapter.query(LastSyncMetadata.class, Initiator.SYNC_ENGINE, Where.matches(hasMatchingModelClassName), results -> {
                 try {
                     LastSyncMetadata syncMetadata = extractSingleResult(modelClassName, results);
                     emitter.onSuccess(SyncTime.from(syncMetadata.getLastSyncTime()));
