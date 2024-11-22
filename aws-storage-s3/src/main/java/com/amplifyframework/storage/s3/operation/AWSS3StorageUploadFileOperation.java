@@ -34,12 +34,13 @@ import com.amplifyframework.storage.s3.request.AWSS3StorageUploadRequest;
 import com.amplifyframework.storage.s3.service.StorageService;
 
 import com.amazonaws.mobileconnectors.s3.transferutility.TransferListener;
-import com.amazonaws.mobileconnectors.s3.transferutility.TransferObserver;
 import com.amazonaws.mobileconnectors.s3.transferutility.TransferState;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 
 import java.io.File;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * An operation to upload a file from AWS S3.
@@ -50,8 +51,9 @@ public final class AWSS3StorageUploadFileOperation extends StorageUploadFileOper
     private final Consumer<StorageTransferProgress> onProgress;
     private final Consumer<StorageUploadFileResult> onSuccess;
     private final Consumer<StorageException> onError;
-    private TransferObserver transferObserver;
+    private final ExecutorService executorService = Executors.newFixedThreadPool(3);
     private final AWSS3StoragePluginConfiguration awsS3StoragePluginConfiguration;
+    private boolean started = false;
 
     /**
      * Constructs a new AWSS3StorageUploadFileOperation.
@@ -79,7 +81,6 @@ public final class AWSS3StorageUploadFileOperation extends StorageUploadFileOper
         this.onProgress = Objects.requireNonNull(onProgress);
         this.onSuccess = Objects.requireNonNull(onSuccess);
         this.onError = Objects.requireNonNull(onError);
-        this.transferObserver = null;
         this.awsS3StoragePluginConfiguration = awsS3StoragePluginConfiguration;
     }
 
@@ -87,7 +88,7 @@ public final class AWSS3StorageUploadFileOperation extends StorageUploadFileOper
     @Override
     public void start() {
         // Only start if it hasn't already been started
-        if (transferObserver != null) {
+        if (started) {
             return;
         }
         // Grab the file to upload...
@@ -105,69 +106,48 @@ public final class AWSS3StorageUploadFileOperation extends StorageUploadFileOper
 
         // Upload!
         awsS3StoragePluginConfiguration.
-            getAWSS3PluginPrefixResolver(cognitoAuthProvider).
-            resolvePrefix(getRequest().getAccessLevel(),
-                getRequest().getTargetIdentityId(),
-                prefix -> {
-                    try {
-                        String serviceKey = prefix.concat(getRequest().getKey());
-                        transferObserver = storageService.uploadFile(serviceKey, file, objectMetadata);
-                        transferObserver.setTransferListener(new UploadTransferListener());
-                    } catch (Exception exception) {
-                        onError.accept(new StorageException(
-                                "Issue uploading file.",
-                                exception,
-                                "See included exception for more details and suggestions to fix."
-                        ));
-                    }
-                },
-                onError
-            );
+                getAWSS3PluginPrefixResolver(cognitoAuthProvider).
+                resolvePrefix(getRequest().getAccessLevel(),
+                        getRequest().getTargetIdentityId(),
+                        prefix -> executorService.submit(() -> {
+                            try {
+                                String serviceKey = prefix.concat(getRequest().getKey());
+                                storageService.uploadFile(serviceKey, file, objectMetadata);
+                                new UploadTransferListener().onStateChanged(0, TransferState.COMPLETED);
+                            } catch (Exception exception) {
+                                onError.accept(new StorageException(
+                                        "Issue uploading file.",
+                                        exception,
+                                        "See included exception for more details and suggestions to fix."
+                                ));
+                            }
+                        }),
+                        onError
+                );
+        started = true;
     }
 
     @Override
     public void cancel() {
-        if (transferObserver != null) {
-            try {
-                storageService.cancelTransfer(transferObserver);
-            } catch (Exception exception) {
-                onError.accept(new StorageException(
-                        "Something went wrong while attempting to cancel your AWS S3 Storage upload file operation",
-                        exception,
-                        "See attached exception for more information and suggestions"
-                ));
-            }
+        try {
+            executorService.shutdownNow();
+        } catch (Exception exception) {
+            onError.accept(new StorageException(
+                    "Something went wrong while attempting to cancel your AWS S3 Storage upload file operation",
+                    exception,
+                    "See attached exception for more information and suggestions"
+            ));
         }
     }
 
     @Override
     public void pause() {
-        if (transferObserver != null) {
-            try {
-                storageService.pauseTransfer(transferObserver);
-            } catch (Exception exception) {
-                onError.accept(new StorageException(
-                        "Something went wrong while attempting to pause your AWS S3 Storage upload file operation",
-                        exception,
-                        "See attached exception for more information and suggestions"
-                ));
-            }
-        }
+        //NA
     }
 
     @Override
     public void resume() {
-        if (transferObserver != null) {
-            try {
-                storageService.resumeTransfer(transferObserver);
-            } catch (Exception exception) {
-                onError.accept(new StorageException(
-                        "Something went wrong while attempting to resume your AWS S3 Storage upload file operation",
-                        exception,
-                        "See attached exception for more information and suggestions"
-                ));
-            }
-        }
+        //NA
     }
 
     @SuppressLint("SyntheticAccessor")

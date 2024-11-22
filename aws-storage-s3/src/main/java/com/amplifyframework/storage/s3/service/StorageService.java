@@ -48,9 +48,8 @@ public interface StorageService {
      * to monitor download progress.
      * @param serviceKey key to uniquely specify item to download
      * @param file file to write downloaded item
-     * @return An instance of {@link TransferObserver} to monitor download
      */
-    TransferObserver downloadToFile(@NonNull String serviceKey,
+    void downloadToFile(@NonNull String serviceKey,
                                     @NonNull File file);
 
     /**
@@ -60,9 +59,8 @@ public interface StorageService {
      * @param serviceKey key to uniquely label item in storage
      * @param file file to upload
      * @param metadata metadata to attach to uploaded item
-     * @return An instance of {@link TransferObserver} to monitor upload
      */
-    TransferObserver uploadFile(@NonNull String serviceKey,
+    void uploadFile(@NonNull String serviceKey,
                                 @NonNull File file,
                                 @NonNull ObjectMetadata metadata);
 
@@ -73,11 +71,10 @@ public interface StorageService {
      * @param serviceKey key to uniquely label item in storage
      * @param inputStream InputStream from which to read content
      * @param metadata metadata to attach to uploaded item
-     * @return An instance of {@link TransferObserver} to monitor upload
      * @throws IOException on error reading the InputStream, or saving it to a temporary
      *         File before the upload begins.
      */
-    TransferObserver uploadInputStream(@NonNull String serviceKey,
+    void uploadInputStream(@NonNull String serviceKey,
                                        @NonNull InputStream inputStream,
                                        @NonNull ObjectMetadata metadata) throws IOException;
 
@@ -94,24 +91,6 @@ public interface StorageService {
      * @param serviceKey Key of the item to remove from storage
      */
     void deleteObject(@NonNull String serviceKey);
-
-    /**
-     * Pause the ongoing transfer.
-     * @param transfer Transfer to temporarily pause
-     */
-    void pauseTransfer(@NonNull TransferObserver transfer);
-
-    /**
-     * Resume the paused transfer.
-     * @param transfer Transfer to resume progress on
-     */
-    void resumeTransfer(@NonNull TransferObserver transfer);
-
-    /**
-     * Cancel the ongoign transfer.
-     * @param transfer Transfer to cancel
-     */
-    void cancelTransfer(@NonNull TransferObserver transfer);
 
     /**
      * A method to create an instance of storage service.
