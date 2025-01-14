@@ -49,15 +49,16 @@ public final class MutationQueue {
      * Find the first Pending Mutation which its model has the same id.
      *
      * @param modelId the model id
+     * @param modelName the model name
      * @return the {@link PendingMutation} instance
      */
-    synchronized PendingMutation<? extends Model> nextMutationForModelId(String modelId) {
+    synchronized PendingMutation<? extends Model> nextMutationForModelIdAndName(String modelId, String modelName) {
         Node head = dummyHead.next;
         if (head == dummyTail) {
             return null;
         }
         while (head != dummyTail) {
-            if (head.mutation.getMutatedItem().getId().equals(modelId)) {
+            if (head.mutation.getMutatedItem().getId().equals(modelId) && head.mutation.getMutatedItem().getModelName().equals(modelName)) {
                 return head.mutation;
             }
             head = head.next;

@@ -76,9 +76,9 @@ final class PersistentMutationOutbox implements MutationOutbox {
     }
 
     @Override
-    public boolean hasPendingMutation(@NonNull String modelId) {
+    public boolean hasPendingMutation(@NonNull String modelId, @NonNull String modelName) {
         Objects.requireNonNull(modelId);
-        return mutationQueue.nextMutationForModelId(modelId) != null;
+        return mutationQueue.nextMutationForModelIdAndName(modelId, modelName) != null;
     }
 
     @NonNull
@@ -89,8 +89,9 @@ final class PersistentMutationOutbox implements MutationOutbox {
             // If there is no existing mutation for the model, then just apply the incoming
             // mutation, and be done with this.
             String modelId = incomingMutation.getMutatedItem().getId();
+            String modelName = incomingMutation.getMutatedItem().getModelName();
             @SuppressWarnings("unchecked")
-            PendingMutation<T> existingMutation = (PendingMutation<T>) mutationQueue.nextMutationForModelId(modelId);
+            PendingMutation<T> existingMutation = (PendingMutation<T>) mutationQueue.nextMutationForModelIdAndName(modelId, modelName);
             if (existingMutation == null || inFlightMutations.contains(existingMutation.getMutationId())) {
                 return save(incomingMutation)
                     .andThen(notifyContentAvailable());

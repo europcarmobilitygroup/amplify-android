@@ -24,7 +24,7 @@ import com.amplifyframework.datastore.DataStoreException;
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Observable;
 
-/*
+/**
  * The {@link MutationOutbox} is a persistently-backed in-order staging ground
  * for changes that have already occurred in the storage adapter, and need
  * to be synchronized with a remote GraphQL API, via (a) GraphQL mutation(s).
@@ -48,9 +48,10 @@ interface MutationOutbox {
      * Checks to see if there is a pending mutation for a model with the given ID.
      *
      * @param modelId ID of any model in the system
+     * @param modelName name of any model in the system
      * @return true if there is a pending mutation for the model id, false if not.
      */
-    boolean hasPendingMutation(@NonNull String modelId);
+    boolean hasPendingMutation(@NonNull String modelId, @NonNull String modelName);
 
     /**
      * Write a new {@link PendingMutation} into the outbox.
