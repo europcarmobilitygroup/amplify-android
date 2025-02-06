@@ -15,28 +15,16 @@
 
 package com.amplifyframework.storage.s3.service;
 
-import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.content.Context;
-import android.content.Intent;
-import android.os.Build;
 import androidx.annotation.NonNull;
-import androidx.annotation.RequiresApi;
-import androidx.core.app.NotificationCompat;
-
+import com.amazonaws.services.s3.model.GetObjectRequest;
+import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.amplifyframework.storage.StorageException;
 import com.amplifyframework.storage.StorageItem;
 import com.amplifyframework.storage.s3.CognitoAuthProvider;
-import com.amplifyframework.storage.s3.R;
 import com.amplifyframework.storage.s3.utils.S3Keys;
 import com.amplifyframework.util.UserAgent;
-
 import com.amazonaws.ClientConfiguration;
 import com.amazonaws.mobileconnectors.s3.transferutility.TransferObserver;
-import com.amazonaws.mobileconnectors.s3.transferutility.TransferService;
-import com.amazonaws.mobileconnectors.s3.transferutility.TransferUtility;
-import com.amazonaws.mobileconnectors.s3.transferutility.UploadOptions;
 import com.amazonaws.regions.Region;
 import com.amazonaws.services.s3.AmazonS3Client;
 import com.amazonaws.services.s3.S3ClientOptions;
@@ -44,9 +32,7 @@ import com.amazonaws.services.s3.model.ListObjectsV2Request;
 import com.amazonaws.services.s3.model.ListObjectsV2Result;
 import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.S3ObjectSummary;
-
 import java.io.File;
-import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.util.ArrayList;
@@ -59,16 +45,13 @@ import java.util.concurrent.TimeUnit;
  */
 public final class AWSS3StorageService implements StorageService {
 
-    private final Context context;
     private final String bucket;
-    private final TransferUtility transferUtility;
     private final AmazonS3Client client;
     private final CognitoAuthProvider cognitoAuthProvider;
 
     /**
      * Constructs a new AWSS3StorageService.
      * @param region Region in which the S3 endpoint resides
-     * @param context An Android Context
      * @param bucket An S3 bucket name
      * @param cognitoAuthProvider Provides AWS specific Auth information
      * @param transferAcceleration Whether or not transfer acceleration
@@ -76,14 +59,12 @@ public final class AWSS3StorageService implements StorageService {
      * @throws IllegalStateException Storage service requires the correct Auth plugin to have been added to Amplify
      */
     public AWSS3StorageService(
-            @NonNull Context context,
             @NonNull Region region,
             @NonNull String bucket,
             @NonNull CognitoAuthProvider cognitoAuthProvider,
             boolean transferAcceleration
     ) {
         try {
-            this.context = context;
             this.bucket = bucket;
             this.cognitoAuthProvider = cognitoAuthProvider;
             this.client = createS3Client(region);
@@ -94,11 +75,6 @@ public final class AWSS3StorageService implements StorageService {
                         .build()
                 );
             }
-
-            this.transferUtility = TransferUtility.builder()
-                    .context(this.context)
-                    .s3Client(client)
-                    .build();
         } catch (StorageException exception) {
             throw new IllegalStateException(
                 "AWSS3StoragePlugin depends on AWSCognitoAuthPlugin but it is currently missing.");
@@ -127,15 +103,12 @@ public final class AWSS3StorageService implements StorageService {
      * Begin downloading a file.
      * @param serviceKey S3 service key
      * @param file Target file
-     * @return A transfer observer
      */
-    @NonNull
-    public TransferObserver downloadToFile(
+    public void downloadToFile(
             @NonNull String serviceKey,
             @NonNull File file
     ) {
-        startTransferService();
-        return transferUtility.download(bucket, serviceKey, file);
+        client.getObject(new GetObjectRequest(bucket, serviceKey), file);
     }
 
     /**
@@ -143,16 +116,15 @@ public final class AWSS3StorageService implements StorageService {
      * @param serviceKey S3 service key
      * @param file Target file
      * @param metadata Object metadata to associate with upload
-     * @return A transfer observer
      */
-    @NonNull
-    public TransferObserver uploadFile(
+    public void uploadFile(
             @NonNull String serviceKey,
             @NonNull File file,
             @NonNull ObjectMetadata metadata
     ) {
-        startTransferService();
-        return transferUtility.upload(bucket, serviceKey, file, metadata);
+        PutObjectRequest putObjectRequest = new PutObjectRequest(bucket, serviceKey, file);
+        putObjectRequest.setMetadata(metadata);
+        client.putObject(putObjectRequest);
     }
 
     /**
@@ -160,21 +132,15 @@ public final class AWSS3StorageService implements StorageService {
      * @param serviceKey S3 service key
      * @param inputStream Target InputStream
      * @param metadata Object metadata to associate with upload
-     * @return A transfer observer
-     * @throws IOException An IOException thrown during the process writing an InputStream into a file
      */
-    @NonNull
-    public TransferObserver uploadInputStream(
+    public void uploadInputStream(
             @NonNull String serviceKey,
             @NonNull InputStream inputStream,
             @NonNull ObjectMetadata metadata
-    ) throws IOException {
-        startTransferService();
-        UploadOptions uploadOptions = UploadOptions.builder()
-                                                    .bucket(bucket)
-                                                    .objectMetadata(metadata)
-                                                    .build();
-        return transferUtility.upload(serviceKey, inputStream, uploadOptions);
+    ) {
+        PutObjectRequest putObjectRequest = new PutObjectRequest(bucket, serviceKey, inputStream, metadata);
+        putObjectRequest.setMetadata(metadata);
+        client.putObject(putObjectRequest);
     }
 
     /**
@@ -185,7 +151,6 @@ public final class AWSS3StorageService implements StorageService {
      */
     @NonNull
     public List<StorageItem> listFiles(@NonNull String path, @NonNull String prefix) {
-        startTransferService();
         ArrayList<StorageItem> itemList = new ArrayList<>();
         ListObjectsV2Request request =
                 new ListObjectsV2Request().withBucketName(this.bucket).withPrefix(path);
@@ -225,44 +190,6 @@ public final class AWSS3StorageService implements StorageService {
     }
 
     /**
-     * Pause a file transfer operation.
-     * @param transfer an in-progress transfer
-     */
-    public void pauseTransfer(@NonNull TransferObserver transfer) {
-        startTransferService();
-        transferUtility.pause(transfer.getId());
-    }
-
-    /**
-     * Resume a file transfer.
-     * @param transfer A transfer to be resumed
-     */
-    public void resumeTransfer(@NonNull TransferObserver transfer) {
-        startTransferService();
-        transferUtility.resume(transfer.getId());
-    }
-
-    /**
-     * Cancel a file transfer.
-     * @param transfer A file transfer to cancel
-     */
-    public void cancelTransfer(@NonNull TransferObserver transfer) {
-        startTransferService();
-        transferUtility.cancel(transfer.getId());
-    }
-
-    private void startTransferService() {
-        // TODO: When a reset method is defined, stop service.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Intent serviceIntent = new Intent(context, TransferService.class);
-            serviceIntent.putExtra(TransferService.INTENT_KEY_NOTIFICATION, createDefaultNotification());
-            context.startForegroundService(serviceIntent);
-        } else {
-            context.startService(new Intent(context, TransferService.class));
-        }
-    }
-
-    /**
      * Gets a handle the S3 client underlying this service.
      * @return S3 client instance
      */
@@ -271,31 +198,4 @@ public final class AWSS3StorageService implements StorageService {
         return client;
     }
 
-    private Notification createDefaultNotification() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            createChannel();
-        }
-        int appIcon = R.drawable.amplify_storage_transfer_notification_icon;
-        return new NotificationCompat.Builder(
-            context,
-            context.getString(R.string.amplify_storage_notification_channel_id)
-        )
-            .setSmallIcon(appIcon)
-            .setContentTitle(context.getString(R.string.amplify_storage_notification_title))
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build();
-    }
-
-    @RequiresApi(api = Build.VERSION_CODES.O)
-    private void createChannel() {
-        NotificationManager notificationManager =
-            (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        notificationManager.createNotificationChannel(
-            new NotificationChannel(
-                context.getString(R.string.amplify_storage_notification_channel_id),
-                context.getString(R.string.amplify_storage_notification_channel_name),
-                NotificationManager.IMPORTANCE_LOW
-            )
-        );
-    }
 }

@@ -33,10 +33,11 @@ import com.amplifyframework.storage.s3.request.AWSS3StorageDownloadFileRequest;
 import com.amplifyframework.storage.s3.service.StorageService;
 
 import com.amazonaws.mobileconnectors.s3.transferutility.TransferListener;
-import com.amazonaws.mobileconnectors.s3.transferutility.TransferObserver;
 import com.amazonaws.mobileconnectors.s3.transferutility.TransferState;
 
 import java.io.File;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * An operation to download a file from AWS S3.
@@ -48,9 +49,10 @@ public final class AWSS3StorageDownloadFileOperation
     private final Consumer<StorageTransferProgress> onProgress;
     private final Consumer<StorageDownloadFileResult> onSuccess;
     private final Consumer<StorageException> onError;
-    private TransferObserver transferObserver;
+    private final ExecutorService executorService = Executors.newFixedThreadPool(3);
     private final AWSS3StoragePluginConfiguration awsS3StoragePluginConfiguration;
     private File file;
+    private boolean started = false;
 
     /**
      * Constructs a new AWSS3StorageDownloadFileOperation.
@@ -78,7 +80,6 @@ public final class AWSS3StorageDownloadFileOperation
         this.onProgress = onProgress;
         this.onSuccess = onSuccess;
         this.onError = onError;
-        this.transferObserver = null;
         this.file = null;
         this.awsS3StoragePluginConfiguration = awss3StoragePluginConfiguration;
     }
@@ -87,76 +88,56 @@ public final class AWSS3StorageDownloadFileOperation
     @Override
     public void start() {
         // Only start if it hasn't already been started
-        if (transferObserver != null) {
+        if (started) {
             return;
         }
 
         this.file = getRequest().getLocal();
 
         awsS3StoragePluginConfiguration.
-            getAWSS3PluginPrefixResolver(cognitoAuthProvider).
-            resolvePrefix(getRequest().getAccessLevel(),
-            getRequest().getTargetIdentityId(),
-                prefix -> {
-                    try {
-                        String serviceKey = prefix.concat(getRequest().getKey());
-                        transferObserver = storageService.downloadToFile(serviceKey, file);
-                        transferObserver.setTransferListener(new DownloadTransferListener());
-                    } catch (Exception exception) {
-                        onError.accept(new StorageException(
-                                "Issue downloading file",
-                                exception,
-                                "See included exception for more details and suggestions to fix."
-                        ));
-                    }
-                },
-                onError);
+                getAWSS3PluginPrefixResolver(cognitoAuthProvider).
+                resolvePrefix(getRequest().getAccessLevel(),
+                        getRequest().getTargetIdentityId(),
+                        prefix -> executorService.submit(() -> {
+                            try {
+                                String serviceKey = prefix.concat(getRequest().getKey());
+                                storageService.downloadToFile(serviceKey, file);
+                                new DownloadTransferListener().onStateChanged(0, TransferState.COMPLETED);
+                            } catch (Exception exception) {
+                                onError.accept(new StorageException(
+                                        "Issue downloading file",
+                                        exception,
+                                        "See included exception for more details and suggestions to fix."
+                                ));
+                            }
+                        }),
+                        onError);
+
+        started = true;
 
     }
 
     @Override
     public void cancel() {
-        if (transferObserver != null) {
-            try {
-                storageService.cancelTransfer(transferObserver);
-            } catch (Exception exception) {
-                onError.accept(new StorageException(
-                        "Something went wrong while attempting to cancel your AWS S3 Storage download file operation",
-                        exception,
-                        "See attached exception for more information and suggestions"
-                ));
-            }
+        try {
+            executorService.shutdownNow();
+        } catch (Exception exception) {
+            onError.accept(new StorageException(
+                    "Something went wrong while attempting to cancel your AWS S3 Storage download file operation",
+                    exception,
+                    "See attached exception for more information and suggestions"
+            ));
         }
     }
 
     @Override
     public void pause() {
-        if (transferObserver != null) {
-            try {
-                storageService.pauseTransfer(transferObserver);
-            } catch (Exception exception) {
-                onError.accept(new StorageException(
-                        "Something went wrong while attempting to pause your AWS S3 Storage download file operation",
-                        exception,
-                        "See attached exception for more information and suggestions"
-                ));
-            }
-        }
+        //NA
     }
 
     @Override
     public void resume() {
-        if (transferObserver != null) {
-            try {
-                storageService.resumeTransfer(transferObserver);
-            } catch (Exception exception) {
-                onError.accept(new StorageException(
-                        "Something went wrong while attempting to resume your AWS S3 Storage download file operation",
-                        exception,
-                        "See attached exception for more information and suggestions"
-                ));
-            }
-        }
+        //NA
     }
 
     @SuppressLint("SyntheticAccessor")
