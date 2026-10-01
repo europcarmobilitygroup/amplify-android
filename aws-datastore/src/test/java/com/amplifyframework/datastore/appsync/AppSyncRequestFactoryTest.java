@@ -149,13 +149,13 @@ public final class AppSyncRequestFactoryTest {
     }
 
     /**
-     * If a QueryPredicateOperation is provided, it should be wrapped in an AND group.  This enables AppSync to
-     * optimize by performing an DDB query instead of scan.
+     * If a QueryPredicateOperation is provided, it is sent as-is: this fork does not wrap it in an extra AND
+     * group (see "remove additional 'and' predicates from sync request").
      * @throws AmplifyException On failure to parse ModelSchema from model class
      * @throws JSONException from JSONAssert.assertEquals.
      */
     @Test
-    public void validatePredicateOperationForSyncExpressionIsWrappedWithAnd() throws AmplifyException, JSONException {
+    public void validatePredicateOperationForSyncExpressionIsNotWrappedWithAnd() throws AmplifyException, JSONException {
         String id = "426f8e8d-ea0f-4839-a73f-6a2a38565ba1";
         ModelSchema schema = ModelSchema.fromModelClass(BlogOwner.class);
         final GraphQLRequest<Iterable<Post>> request =
@@ -183,13 +183,13 @@ public final class AppSyncRequestFactoryTest {
     }
 
     /**
-     * If a MatchNoneQueryPredicate is provided, it should be wrapped in an AND group.
-     * This enables AppSync to optimize by performing an DDB query instead of scan.
+     * If a MatchNoneQueryPredicate is provided, it is sent as-is (id eq null): this fork does not wrap it
+     * in an extra AND group.
      * @throws AmplifyException On failure to parse ModelSchema from model class
      * @throws JSONException from JSONAssert.assertEquals.
      */
     @Test
-    public void validateMatchNonePredicateForSyncExpressionIsWrappedWithAnd() throws AmplifyException, JSONException {
+    public void validateMatchNonePredicateForSyncExpressionIsNotWrappedWithAnd() throws AmplifyException, JSONException {
         ModelSchema schema = ModelSchema.fromModelClass(BlogOwner.class);
         final GraphQLRequest<Iterable<Post>> request =
                 AppSyncRequestFactory.buildSyncRequest(schema, null, null, QueryPredicates.none());
@@ -335,6 +335,7 @@ public final class AppSyncRequestFactoryTest {
             Resources.readAsString("on-create-request-for-blog.txt"),
             AppSyncRequestFactory.buildSubscriptionRequest(schema,
                                                            SubscriptionType.ON_CREATE,
+                                                           QueryPredicates.all(),
                                                            DEFAULT_STRATEGY).getContent(),
             true
         );
@@ -354,6 +355,7 @@ public final class AppSyncRequestFactoryTest {
             Resources.readAsString("on-create-request-for-parent.txt"),
             AppSyncRequestFactory.buildSubscriptionRequest(schema,
                                                            SubscriptionType.ON_CREATE,
+                                                           QueryPredicates.all(),
                                                            DEFAULT_STRATEGY).getContent(),
             true
         );
@@ -373,6 +375,7 @@ public final class AppSyncRequestFactoryTest {
             Resources.readAsString("on-update-request-for-post.txt"),
             AppSyncRequestFactory.buildSubscriptionRequest(schema,
                                                            SubscriptionType.ON_UPDATE,
+                                                           QueryPredicates.all(),
                                                            DEFAULT_STRATEGY).getContent(),
             true
         );
@@ -392,6 +395,7 @@ public final class AppSyncRequestFactoryTest {
             Resources.readAsString("on-delete-request-for-blog-owner.txt"),
             AppSyncRequestFactory.buildSubscriptionRequest(schema,
                                                            SubscriptionType.ON_DELETE,
+                                                           QueryPredicates.all(),
                                                            DEFAULT_STRATEGY).getContent(),
             true
         );

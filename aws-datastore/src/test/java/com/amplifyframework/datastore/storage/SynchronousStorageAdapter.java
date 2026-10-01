@@ -168,7 +168,7 @@ public final class SynchronousStorageAdapter {
         Iterator<T> resultIterator = Await.result(
             operationTimeoutMs,
             (Consumer<Iterator<T>> onResult, Consumer<DataStoreException> onError) ->
-                asyncDelegate.query(modelClass, options, onResult, onError)
+                asyncDelegate.query(modelClass, StorageItemChange.Initiator.DATA_STORE_API, options, onResult, onError)
         );
         final List<T> results = new ArrayList<>();
         while (resultIterator.hasNext()) {

@@ -437,7 +437,7 @@ public final class MergerTest {
         // Enforce foreign key constraint on in-memory storage adapter
         doThrow(SQLiteConstraintException.class)
                 .when(inMemoryStorageAdapter)
-                .save(eq(orphanedBlog), any(), any(), any(), any());
+                .saveInternal(eq(orphanedBlog), any(), any());
 
         // Act: merge a creation for an item
         TestObserver<Void> observer = merger.merge(new ModelWithMetadata<>(orphanedBlog, metadata)).test();

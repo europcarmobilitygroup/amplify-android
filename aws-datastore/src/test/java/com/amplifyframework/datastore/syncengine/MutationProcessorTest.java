@@ -100,6 +100,7 @@ public final class MutationProcessorTest {
             .mutationOutbox(mutationOutbox)
             .appSync(appSync)
             .conflictResolver(conflictResolver)
+            .onFailure(failure -> { })
             .build();
     }
 
@@ -166,7 +167,7 @@ public final class MutationProcessorTest {
         assertEquals(1, accumulator.await().size());
 
         // And that it is no longer in the outbox.
-        assertFalse(mutationOutbox.hasPendingMutation(tony.getId()));
+        assertFalse(mutationOutbox.hasPendingMutation(tony.getId(), "BlogOwner"));
 
         // And that it was passed to AppSync for publication.
         verify(appSync).create(eq(tony), any(), any(), any());

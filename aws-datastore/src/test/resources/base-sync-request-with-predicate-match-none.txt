@@ -26,13 +26,9 @@
 ",
   "variables": {
     "filter": {
-        "and": [
-            {
                 "id": {
                     "eq" : null
                 }
             }
-        ]
-    }
   }
 }

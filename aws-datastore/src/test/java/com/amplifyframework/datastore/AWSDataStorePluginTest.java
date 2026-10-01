@@ -40,6 +40,7 @@ import com.amplifyframework.core.model.temporal.Temporal;
 import com.amplifyframework.datastore.appsync.ModelMetadata;
 import com.amplifyframework.datastore.appsync.ModelWithMetadata;
 import com.amplifyframework.datastore.model.SimpleModelProvider;
+import com.amplifyframework.datastore.storage.sqlite.migrations.MigrationConfiguration;
 import com.amplifyframework.hub.HubChannel;
 import com.amplifyframework.hub.HubEvent;
 import com.amplifyframework.logging.Logger;
@@ -120,6 +121,8 @@ public final class AWSDataStorePluginTest {
         //Configure DataStore with an empty config (All defaults)
         ApiCategory emptyApiCategory = spy(ApiCategory.class);
         AWSDataStorePlugin standAloneDataStorePlugin = AWSDataStorePlugin.builder()
+                                                                         .databaseVersion(1)
+                                                                         .migrationConfiguration(new MigrationConfiguration.Builder().build())
                                                                          .modelProvider(modelProvider)
                                                                          .apiCategory(emptyApiCategory)
                                                                          .build();
@@ -139,6 +142,8 @@ public final class AWSDataStorePluginTest {
                 .start();
         ApiCategory emptyApiCategory = spy(ApiCategory.class);
         AWSDataStorePlugin standAloneDataStorePlugin = AWSDataStorePlugin.builder()
+                                                                         .databaseVersion(1)
+                                                                         .migrationConfiguration(new MigrationConfiguration.Builder().build())
                                                                          .modelProvider(modelProvider)
                                                                          .apiCategory(emptyApiCategory)
                                                                          .build();
@@ -180,6 +185,8 @@ public final class AWSDataStorePluginTest {
         JSONObject dataStorePluginJson = new JSONObject()
             .put("syncIntervalInMinutes", 60);
         AWSDataStorePlugin awsDataStorePlugin = AWSDataStorePlugin.builder()
+                                                                  .databaseVersion(1)
+                                                                  .migrationConfiguration(new MigrationConfiguration.Builder().build())
                                                                   .modelProvider(modelProvider)
                                                                   .apiCategory(mockApiCategory)
                                                                   .build();
@@ -217,6 +224,8 @@ public final class AWSDataStorePluginTest {
         JSONObject dataStorePluginJson = new JSONObject()
             .put("syncIntervalInMinutes", 60);
         AWSDataStorePlugin awsDataStorePlugin = AWSDataStorePlugin.builder()
+                                                                  .databaseVersion(1)
+                                                                  .migrationConfiguration(new MigrationConfiguration.Builder().build())
                                                                   .modelProvider(modelProvider)
                                                                   .apiCategory(mockApiCategory)
                                                                   .build();
@@ -249,6 +258,8 @@ public final class AWSDataStorePluginTest {
         JSONObject dataStorePluginJson = new JSONObject()
             .put("syncIntervalInMinutes", 60);
         AWSDataStorePlugin awsDataStorePlugin = AWSDataStorePlugin.builder()
+                                                                  .databaseVersion(1)
+                                                                  .migrationConfiguration(new MigrationConfiguration.Builder().build())
                                                                   .modelProvider(modelProvider)
                                                                   .apiCategory(mockApiCategory)
                                                                   .build();
@@ -340,6 +351,8 @@ public final class AWSDataStorePluginTest {
         JSONObject dataStorePluginJson = new JSONObject()
                 .put("syncIntervalInMinutes", 60);
         AWSDataStorePlugin awsDataStorePlugin = AWSDataStorePlugin.builder()
+                                                                  .databaseVersion(1)
+                                                                  .migrationConfiguration(new MigrationConfiguration.Builder().build())
                                                                   .modelProvider(modelProvider)
                                                                   .apiCategory(mockApiCategory)
                                                                   .build();
@@ -558,6 +571,8 @@ public final class AWSDataStorePluginTest {
     @Test
     public void observeWithMatchingPredicate() throws InterruptedException, AmplifyException, JSONException {
         AWSDataStorePlugin awsDataStorePlugin = AWSDataStorePlugin.builder()
+                .databaseVersion(1)
+                .migrationConfiguration(new MigrationConfiguration.Builder().build())
                 .modelProvider(modelProvider)
                 .build();
         JSONObject dataStorePluginJson = new JSONObject()
@@ -601,6 +616,8 @@ public final class AWSDataStorePluginTest {
     @Test
     public void observeWithoutMatchingPredicate() throws InterruptedException, AmplifyException, JSONException {
         AWSDataStorePlugin awsDataStorePlugin = AWSDataStorePlugin.builder()
+                .databaseVersion(1)
+                .migrationConfiguration(new MigrationConfiguration.Builder().build())
                 .modelProvider(modelProvider)
                 .build();
         JSONObject dataStorePluginJson = new JSONObject()

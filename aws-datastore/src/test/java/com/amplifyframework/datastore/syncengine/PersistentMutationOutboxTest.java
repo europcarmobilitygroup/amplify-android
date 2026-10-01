@@ -142,7 +142,7 @@ public final class PersistentMutationOutboxTest {
             Collections.singletonList(converter.toRecord(createJameson)),
             storage.query(PersistentRecord.class)
         );
-        assertTrue(mutationOutbox.hasPendingMutation(jameson.getId()));
+        assertTrue(mutationOutbox.hasPendingMutation(jameson.getId(), "BlogOwner"));
         assertEquals(createJameson, mutationOutbox.peek());
     }
 
@@ -203,8 +203,8 @@ public final class PersistentMutationOutboxTest {
         loadObserver.dispose();
 
         // Assert: items are in the outbox.
-        assertTrue(mutationOutbox.hasPendingMutation(tony.getId()));
-        assertTrue(mutationOutbox.hasPendingMutation(sam.getId()));
+        assertTrue(mutationOutbox.hasPendingMutation(tony.getId(), "BlogOwner"));
+        assertTrue(mutationOutbox.hasPendingMutation(sam.getId(), "BlogOwner"));
 
         // Tony is first, since he is the older of the two mutations.
         assertEquals(updateTony, mutationOutbox.peek());
@@ -234,7 +234,7 @@ public final class PersistentMutationOutboxTest {
         assertEquals(0, storage.query(PersistentRecord.class).size());
 
         assertNull(mutationOutbox.peek());
-        assertFalse(mutationOutbox.hasPendingMutation(bill.getId()));
+        assertFalse(mutationOutbox.hasPendingMutation(bill.getId(), "BlogOwner"));
     }
 
     /**
@@ -298,7 +298,7 @@ public final class PersistentMutationOutboxTest {
 
     /**
      * When there is a pending mutation for a particular model ID
-     * {@link MutationOutbox#hasPendingMutation(String)} must say "yes!".
+     * {@link MutationOutbox#hasPendingMutation(String, "BlogOwner")} must say "yes!".
      */
     @Test
     public void hasPendingMutationReturnsTrueForExistingModelMutation() {
@@ -313,8 +313,8 @@ public final class PersistentMutationOutboxTest {
         );
         mutationOutbox.enqueue(pendingMutation).blockingAwait(TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
-        assertTrue(mutationOutbox.hasPendingMutation(modelId));
-        assertFalse(mutationOutbox.hasPendingMutation(mutationId.toString()));
+        assertTrue(mutationOutbox.hasPendingMutation(modelId, "BlogOwner"));
+        assertFalse(mutationOutbox.hasPendingMutation(mutationId.toString(), "BlogOwner"));
     }
 
     /**
@@ -341,8 +341,8 @@ public final class PersistentMutationOutboxTest {
         );
         storage.save(converter.toRecord(unrelatedMutation));
 
-        assertFalse(mutationOutbox.hasPendingMutation(joeId));
-        assertFalse(mutationOutbox.hasPendingMutation(mutationId.toString()));
+        assertFalse(mutationOutbox.hasPendingMutation(joeId, "BlogOwner"));
+        assertFalse(mutationOutbox.hasPendingMutation(mutationId.toString(), "BlogOwner"));
     }
 
     /**
@@ -383,7 +383,7 @@ public final class PersistentMutationOutboxTest {
         assertTrue(storage.query(PersistentRecord.class, Where.id(incomingCreationId)).isEmpty());
 
         // Existing mutation still attainable as next mutation (right now, its the ONLY mutation in outbox)
-        assertTrue(mutationOutbox.hasPendingMutation(modelInExistingMutation.getId()));
+        assertTrue(mutationOutbox.hasPendingMutation(modelInExistingMutation.getId(), "BlogOwner"));
         assertEquals(existingCreation, mutationOutbox.peek());
     }
 
@@ -425,7 +425,7 @@ public final class PersistentMutationOutboxTest {
         assertTrue(storage.query(PersistentRecord.class, Where.id(incomingCreationId)).isEmpty());
 
         // Existing mutation still attainable as next mutation (right now, its the ONLY mutation in outbox)
-        assertTrue(mutationOutbox.hasPendingMutation(modelInExistingMutation.getId()));
+        assertTrue(mutationOutbox.hasPendingMutation(modelInExistingMutation.getId(), "BlogOwner"));
         assertEquals(existingUpdate, mutationOutbox.peek());
     }
 
@@ -468,7 +468,7 @@ public final class PersistentMutationOutboxTest {
         assertTrue(storage.query(PersistentRecord.class, Where.id(incomingCreationId)).isEmpty());
 
         // Existing mutation still attainable as next mutation (right now, its the ONLY mutation in outbox)
-        assertTrue(mutationOutbox.hasPendingMutation(modelInExistingMutation.getId()));
+        assertTrue(mutationOutbox.hasPendingMutation(modelInExistingMutation.getId(), "BlogOwner"));
         assertEquals(existingDeletion, mutationOutbox.peek());
     }
 
@@ -510,7 +510,7 @@ public final class PersistentMutationOutboxTest {
         assertTrue(storage.query(PersistentRecord.class, Where.id(incomingUpdateId)).isEmpty());
 
         // Existing mutation still attainable as next mutation (right now, its the ONLY mutation in outbox)
-        assertTrue(mutationOutbox.hasPendingMutation(modelInExistingMutation.getId()));
+        assertTrue(mutationOutbox.hasPendingMutation(modelInExistingMutation.getId(), "BlogOwner"));
         assertEquals(existingDeletion, mutationOutbox.peek());
     }
 
@@ -582,13 +582,14 @@ public final class PersistentMutationOutboxTest {
     }
 
     /**
-     * When there is an existing update mutation, and a new update mutation comes in,
-     * then we need to remove any existing mutations for that modelId and create the new one.
+     * When there is an existing update mutation (not in flight), and a new update mutation comes in,
+     * the incoming mutation is appended after the existing one. The existing mutation is left untouched,
+     * so both are published, in order. (This fork appends instead of rewriting the existing mutation.)
      * @throws DataStoreException On failure to query storage for current mutations state
      * @throws InterruptedException If interrupted while awaiting terminal result in test observer
      */
     @Test
-    public void existingUpdateIncomingUpdateWithoutConditionRewritesExistingMutation()
+    public void existingUpdateIncomingUpdateWithoutConditionAppendsNewMutation()
             throws DataStoreException, InterruptedException {
         // Arrange an existing update mutation
         BlogOwner modelInExistingMutation = BlogOwner.builder()
@@ -612,166 +613,118 @@ public final class PersistentMutationOutboxTest {
         enqueueObserver.await(TIMEOUT_MS, TimeUnit.MILLISECONDS);
         enqueueObserver.assertComplete();
 
-        // Assert: the existing mutation has been removed
-        assertRecordCountForMutationId(existingUpdateId, 0);
+        // Assert: both mutations are stored, each under its own ID, with its own contents.
+        assertRecordCountForMutationId(existingUpdateId, 1);
+        assertRecordCountForMutationId(incomingUpdateId, 1);
+        PendingMutation<BlogOwner> storedExisting =
+            converter.fromRecord(getPendingMutationRecordFromStorage(existingUpdateId).get(0));
+        assertEquals(modelInExistingMutation.getName(), storedExisting.getMutatedItem().getName());
+        PendingMutation<BlogOwner> storedIncoming =
+            converter.fromRecord(getPendingMutationRecordFromStorage(incomingUpdateId).get(0));
+        assertEquals(modelInIncomingMutation.getName(), storedIncoming.getMutatedItem().getName());
 
-        // And the new one has been added to the queue
+        // The existing mutation is still first in line; the incoming one follows it.
+        assertEquals(existingUpdate, mutationOutbox.peek());
+        mutationOutbox.remove(existingUpdate.getMutationId()).blockingAwait(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        assertEquals(incomingUpdate, mutationOutbox.peek());
+    }
+
+    /**
+     * When there is an existing SerializedModel update mutation, and a new SerializedModel update mutation comes
+     * in, the incoming mutation is appended as a separate UPDATE; the existing one is not merged or changed.
+     * @throws AmplifyException On failure to find the serializedModel difference.
+     * @throws InterruptedException If interrupted while awaiting terminal result in test observer
+     */
+    @Test
+    public void existingSerializedModelUpdateIncomingUpdateAppendsNewMutation()
+            throws AmplifyException, InterruptedException {
+        assertSerializedIncomingUpdateIsAppended(PendingMutation.Type.UPDATE);
+    }
+
+    /**
+     * When there is an existing SerializedModel create mutation, and a new SerializedModel update mutation comes
+     * in, the incoming mutation is appended as a separate UPDATE; the existing CREATE is not merged or changed.
+     * @throws AmplifyException On failure to find the serializedModel difference.
+     * @throws InterruptedException If interrupted while awaiting terminal result in test observer
+     */
+    @Test
+    public void existingSerializedModelCreateIncomingUpdateAppendsNewMutation()
+            throws AmplifyException, InterruptedException {
+        assertSerializedIncomingUpdateIsAppended(PendingMutation.Type.CREATE);
+    }
+
+    private void assertSerializedIncomingUpdateIsAppended(PendingMutation.Type existingType)
+            throws AmplifyException, InterruptedException {
+        // Arrange an existing mutation of the given type
+        BlogOwner modelInSqlLite = BlogOwner.builder()
+                .name("Papa Tony")
+                .wea("Something")
+                .build();
+        BlogOwner initialUpdate = BlogOwner.builder()
+                .name("Tony Jr")
+                .id(modelInSqlLite.getId())
+                .build();
+        SerializedModel existingData = SerializedModel.difference(initialUpdate, modelInSqlLite, schema);
+        PendingMutation<SerializedModel> existingMutation = PendingMutation.Type.CREATE.equals(existingType)
+                ? PendingMutation.creation(existingData, schema)
+                : PendingMutation.update(existingData, schema);
+        String existingMutationId = existingMutation.getMutationId().toString();
+        mutationOutbox.enqueue(existingMutation).blockingAwait();
+
+        // Act: enqueue an update for the same model
+        BlogOwner incomingUpdatedModel = BlogOwner.builder()
+                .name("Papa Tony")
+                .wea("something else")
+                .id(modelInSqlLite.getId())
+                .build();
+        PendingMutation<SerializedModel> incomingUpdate = PendingMutation.update(
+                SerializedModel.difference(incomingUpdatedModel, modelInSqlLite, schema),
+                schema);
+        String incomingUpdateId = incomingUpdate.getMutationId().toString();
+        TestObserver<Void> enqueueObserver = mutationOutbox.enqueue(incomingUpdate).test();
+
+        // Assert: OK. The new mutation is accepted
+        enqueueObserver.await(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        enqueueObserver.assertComplete();
+
+        // Assert: both mutations are stored under their own IDs
+        assertRecordCountForMutationId(existingMutationId, 1);
         assertRecordCountForMutationId(incomingUpdateId, 1);
 
-        // Ensure the new one is in storage.
-        PendingMutation<BlogOwner> storedMutation =
-            converter.fromRecord(getPendingMutationRecordFromStorage(incomingUpdateId).get(0));
-        // This is the name from the second model, not the first!!
-        assertEquals(modelInIncomingMutation.getName(), storedMutation.getMutatedItem().getName());
+        // The existing mutation is unchanged (type and data)
+        PendingMutation<SerializedModel> storedExisting =
+                converter.fromRecord(getPendingMutationRecordFromStorage(existingMutationId).get(0));
+        assertEquals(existingType, storedExisting.getMutationType());
+        // (Compare field by field: null values may not survive the JSON round-trip of the outbox record.)
+        assertEquals(existingData.getSerializedData().get("name"),
+                storedExisting.getMutatedItem().getSerializedData().get("name"));
+        assertEquals(existingData.getSerializedData().get("wea"),
+                storedExisting.getMutatedItem().getSerializedData().get("wea"));
 
-        // The mutation in the outbox is the incoming one.
-        assertEquals(
-            incomingUpdate,
-            mutationOutbox.peek()
-        );
-    }
-
-    /**
-     * When there is an existing SerializedModel update mutation, and a new SerializedModel update mutation comes in,
-     * then we need to merge any existing mutations for that modelId and create the new one of type Update.
-     * @throws AmplifyException On failure to find the serializedModel difference.
-     * @throws InterruptedException If interrupted while awaiting terminal result in test observer
-     */
-    @Test
-    public void existingSerializedModelUpdateIncomingUpdateWithoutConditionMergesWithExistingMutation()
-            throws AmplifyException, InterruptedException {
-        // Arrange an existing update mutation
-        BlogOwner modelInSqlLite = BlogOwner.builder()
-                .name("Papa Tony")
-                .wea("Something")
-                .build();
-
-        BlogOwner initialUpdate = BlogOwner.builder()
-                .name("Tony Jr")
-                .id(modelInSqlLite.getId())
-                .build();
-
-        PendingMutation<SerializedModel> initialUpdatePendingMutation =
-                PendingMutation.update(SerializedModel.difference(initialUpdate, modelInSqlLite, schema), schema);
-        String existingUpdateId = initialUpdatePendingMutation.getMutationId().toString();
-        mutationOutbox.enqueue(initialUpdatePendingMutation).blockingAwait();
-
-        // Act: try to enqueue a new update mutation when there already is one
-        BlogOwner incomingUpdatedModel = BlogOwner.builder()
-                .name("Papa Tony")
-                .wea("something else")
-                .id(modelInSqlLite.getId())
-                .build();
-        PendingMutation<SerializedModel> incomingUpdate = PendingMutation.update(
-                SerializedModel.difference(incomingUpdatedModel, modelInSqlLite, schema),
-                schema);
-        String incomingUpdateId = incomingUpdate.getMutationId().toString();
-        TestObserver<Void> enqueueObserver = mutationOutbox.enqueue(incomingUpdate).test();
-
-        // Assert: OK. The new mutation is accepted
-        enqueueObserver.await(TIMEOUT_MS, TimeUnit.MILLISECONDS);
-        enqueueObserver.assertComplete();
-
-        // Assert: the existing mutation has been removed
-        assertRecordCountForMutationId(existingUpdateId, 0);
-
-        // And the new one has been added to the queue
-        assertRecordCountForMutationId(incomingUpdateId, 0);
-
-        List<PersistentRecord> pendingMutationsFromStorage = getAllPendingMutationRecordFromStorage();
-        for (PersistentRecord record : pendingMutationsFromStorage) {
-            if (!record.getContainedModelId().equals(incomingUpdate.getMutatedItem().getId())) {
-                pendingMutationsFromStorage.remove(record);
-            }
-        }
-        // Ensure the new one is in storage.
-        PendingMutation<SerializedModel> storedMutation =
-                converter.fromRecord(pendingMutationsFromStorage.get(0));
-        // This is the name from the second model, not the first!!
-        assertEquals(initialUpdate.getName(),
-                storedMutation.getMutatedItem().getSerializedData().get("name"));
-        // wea got merged from existing model!!
+        // The incoming mutation is a separate UPDATE carrying only its own data
+        PendingMutation<SerializedModel> storedIncoming =
+                converter.fromRecord(getPendingMutationRecordFromStorage(incomingUpdateId).get(0));
+        assertEquals(PendingMutation.Type.UPDATE, storedIncoming.getMutationType());
+        assertEquals(incomingUpdate.getMutatedItem().getSerializedData().get("name"),
+                storedIncoming.getMutatedItem().getSerializedData().get("name"));
         assertEquals(incomingUpdatedModel.getWea(),
-                storedMutation.getMutatedItem().getSerializedData().get("wea"));
-        assertEquals(PendingMutation.Type.UPDATE,
-                storedMutation.getMutationType());
+                storedIncoming.getMutatedItem().getSerializedData().get("wea"));
+
+        // Order is preserved: existing first, then incoming
+        assertEquals(existingMutation.getMutationId(), mutationOutbox.peek().getMutationId());
+        mutationOutbox.remove(existingMutation.getMutationId()).blockingAwait(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        assertEquals(incomingUpdate.getMutationId(), mutationOutbox.peek().getMutationId());
     }
 
     /**
-     * When there is an existing SerializedModel create mutation, and a new SerializedModel update mutation comes in,
-     * then we need to merge any existing mutations for that modelId and create the new one of type Create.
-     * @throws AmplifyException On failure to find the serializedModel difference.
-     * @throws InterruptedException If interrupted while awaiting terminal result in test observer
-     */
-    @Test
-    public void existingSerializedModelCreateIncomingUpdateMergesWithExistingMutation()
-            throws AmplifyException, InterruptedException {
-        // Arrange an existing update mutation
-        BlogOwner modelInSqlLite = BlogOwner.builder()
-                .name("Papa Tony")
-                .wea("Something")
-                .build();
-
-        BlogOwner initialUpdate = BlogOwner.builder()
-                .name("Tony Jr")
-                .id(modelInSqlLite.getId())
-                .build();
-
-        PendingMutation<SerializedModel> initialUpdatePendingMutation =
-                PendingMutation.creation(SerializedModel.difference(initialUpdate, modelInSqlLite, schema), schema);
-        String existingUpdateId = initialUpdatePendingMutation.getMutationId().toString();
-        mutationOutbox.enqueue(initialUpdatePendingMutation).blockingAwait();
-
-        // Act: try to enqueue a new update mutation when there already is one
-        BlogOwner incomingUpdatedModel = BlogOwner.builder()
-                .name("Papa Tony")
-                .wea("something else")
-                .id(modelInSqlLite.getId())
-                .build();
-        PendingMutation<SerializedModel> incomingUpdate = PendingMutation.update(
-                SerializedModel.difference(incomingUpdatedModel, modelInSqlLite, schema),
-                schema);
-        String incomingUpdateId = incomingUpdate.getMutationId().toString();
-        TestObserver<Void> enqueueObserver = mutationOutbox.enqueue(incomingUpdate).test();
-
-        // Assert: OK. The new mutation is accepted
-        enqueueObserver.await(TIMEOUT_MS, TimeUnit.MILLISECONDS);
-        enqueueObserver.assertComplete();
-
-        // Assert: the existing mutation has been removed
-        assertRecordCountForMutationId(existingUpdateId, 0);
-
-        // And the new one has been added to the queue
-        assertRecordCountForMutationId(incomingUpdateId, 0);
-
-        List<PersistentRecord> pendingMutationsFromStorage = getAllPendingMutationRecordFromStorage();
-        for (PersistentRecord record : pendingMutationsFromStorage) {
-            if (!record.getContainedModelId().equals(incomingUpdate.getMutatedItem().getId())) {
-                pendingMutationsFromStorage.remove(record);
-            }
-        }
-        // Ensure the new one is in storage.
-        PendingMutation<SerializedModel> storedMutation =
-                converter.fromRecord(pendingMutationsFromStorage.get(0));
-        // This is the name from the second model, not the first!!
-        assertEquals(initialUpdate.getName(),
-                storedMutation.getMutatedItem().getSerializedData().get("name"));
-        // wea got merged from existing model!!
-        assertEquals(incomingUpdatedModel.getWea(),
-                storedMutation.getMutatedItem().getSerializedData().get("wea"));
-        assertEquals(PendingMutation.Type.CREATE,
-                storedMutation.getMutationType());
-    }
-
-    /**
-     * When there is an existing creation mutation, and an update comes in,
-     * the exiting creation should be updated with the contents of the incoming
-     * mutation. The original creation mutation ID should be retained, for ordering.
+     * When there is an existing creation mutation (not in flight), and an update comes in, the update is
+     * appended after the creation. The creation keeps its original ID and contents, so the model is first
+     * created and then updated, in order. (This fork appends instead of rewriting the existing mutation.)
      * @throws DataStoreException On failure to query the storage to examine which mutations were saved
      * @throws InterruptedException If interrupted while awaiting terminal result in test observer
      */
     @Test
-    public void existingCreationIncomingUpdateRewritesExitingMutation()
+    public void existingCreationIncomingUpdateAppendsNewMutation()
             throws DataStoreException, InterruptedException {
         // Arrange an existing creation mutation
         BlogOwner modelInExistingMutation = BlogOwner.builder()
@@ -795,34 +748,26 @@ public final class PersistentMutationOutboxTest {
         enqueueObserver.await(TIMEOUT_MS, TimeUnit.MILLISECONDS);
         enqueueObserver.assertComplete();
 
-        // Assert: the existing mutation is still there, by id ....
+        // Assert: the creation is still there, unchanged, by id ....
         List<PendingMutation.PersistentRecord> recordsForExistingMutationId =
             storage.query(PersistentRecord.class, Where.id(existingCreationId));
         assertEquals(1, recordsForExistingMutationId.size());
+        PendingMutation<BlogOwner> storedCreation = converter.fromRecord(recordsForExistingMutationId.get(0));
+        assertEquals("Papa Tony", storedCreation.getMutatedItem().getName());
+        assertEquals(PendingMutation.Type.CREATE, storedCreation.getMutationType());
 
-        // And the new one is not, by ID...
+        // ... and the update is stored too, under its own id, with the new data.
         List<PendingMutation.PersistentRecord> recordsForIncomingMutationId =
             storage.query(PersistentRecord.class, Where.id(incomingUpdateId));
-        assertEquals(0, recordsForIncomingMutationId.size());
+        assertEquals(1, recordsForIncomingMutationId.size());
+        PendingMutation<BlogOwner> storedUpdate = converter.fromRecord(recordsForIncomingMutationId.get(0));
+        assertEquals("Tony Jr.", storedUpdate.getMutatedItem().getName());
+        assertEquals(PendingMutation.Type.UPDATE, storedUpdate.getMutationType());
 
-        // However, the original mutation has been updated to include the contents of the
-        // incoming mutation. This is true even whilst the mutation retains its original ID.
-        PendingMutation<BlogOwner> storedMutation = converter.fromRecord(recordsForExistingMutationId.get(0));
-        // This is the name from the second model, not the first!
-        assertEquals("Tony Jr.", storedMutation.getMutatedItem().getName());
-
-        // There is a mutation in the outbox, it has the original ID.
-        // This is STILL a creation, just using the new model data.
-        assertEquals(
-            PendingMutation.instance(
-                existingCreation.getMutationId(),
-                modelInIncomingMutation,
-                schema,
-                PendingMutation.Type.CREATE,
-                QueryPredicates.all()
-            ),
-            mutationOutbox.peek()
-        );
+        // The creation goes first, then the update.
+        assertEquals(existingCreation, mutationOutbox.peek());
+        mutationOutbox.remove(existingCreation.getMutationId()).blockingAwait(TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        assertEquals(incomingUpdate, mutationOutbox.peek());
     }
 
     /**
@@ -986,7 +931,7 @@ public final class PersistentMutationOutboxTest {
 
     /**
      * If the queue contains multiple items, then
-     * {@link MutationQueue#nextMutationForModelId(String)}
+     * {@link MutationQueue#nextMutationForModelIdAndName(String, String)}
      * returns the first one.
      * @throws DataStoreException On failure to arrange content into storage
      */
@@ -1008,7 +953,7 @@ public final class PersistentMutationOutboxTest {
 
         assertEquals(
             firstMutation,
-            mutationQueue.nextMutationForModelId(originalJoe.getId())
+            mutationQueue.nextMutationForModelIdAndName(originalJoe.getId(), "BlogOwner")
         );
     }
 

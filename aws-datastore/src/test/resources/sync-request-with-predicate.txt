@@ -26,14 +26,10 @@
 ",
   "variables": {
     "filter": {
-      "and" : [
-        {
           "name": {
              "beginsWith": "J"
           }
-        }
-      ]
-    },
+        },
     "limit": 342,
     "lastSync": 123412341
   }

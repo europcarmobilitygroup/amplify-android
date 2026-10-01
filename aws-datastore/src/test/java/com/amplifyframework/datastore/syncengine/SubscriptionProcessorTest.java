@@ -220,11 +220,11 @@ public final class SubscriptionProcessorTest {
             SubscriptionType subscriptionType,
             GraphQLResponse<ModelWithMetadata<T>> response) throws DataStoreException {
         Answer<Cancelable> answer = invocation -> {
-            final int startConsumerIndex = 1;
+            final int startConsumerIndex = 2;
             Consumer<String> onStart = invocation.getArgument(startConsumerIndex);
             onStart.accept(RandomString.string());
 
-            final int dataConsumerIndex = 2;
+            final int dataConsumerIndex = 3;
             Consumer<GraphQLResponse<ModelWithMetadata<T>>> onData = invocation.getArgument(dataConsumerIndex);
             onData.accept(response);
 
@@ -236,7 +236,7 @@ public final class SubscriptionProcessorTest {
     private static void arrangeStartedSubscriptions(
         AppSync appSync, List<ModelSchema> modelSchemas, SubscriptionType[] subscriptionTypes) {
         Answer<Cancelable> answer = invocation -> {
-            final int startConsumerIndex = 1;
+            final int startConsumerIndex = 2;
             Consumer<String> onStart = invocation.getArgument(startConsumerIndex);
             onStart.accept(RandomString.string());
             return new NoOpCancelable();
@@ -261,7 +261,7 @@ public final class SubscriptionProcessorTest {
         AppSync stub = doAnswer(answer).when(appSync);
         SubscriptionProcessor.SubscriptionMethod method =
             SubscriptionProcessor.subscriptionMethodFor(stub, subscriptionType);
-        method.subscribe(eq(modelSchema), anyConsumer(), anyConsumer(), anyConsumer(), anyAction());
+        method.subscribe(eq(modelSchema), any(), anyConsumer(), anyConsumer(), anyConsumer(), anyAction());
     }
 
     private static Action anyAction() {
