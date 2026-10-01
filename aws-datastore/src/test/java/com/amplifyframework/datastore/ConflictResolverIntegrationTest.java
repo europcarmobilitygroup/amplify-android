@@ -38,6 +38,7 @@ import com.amplifyframework.core.model.ModelProvider;
 import com.amplifyframework.core.model.temporal.Temporal;
 import com.amplifyframework.datastore.appsync.ModelMetadata;
 import com.amplifyframework.datastore.appsync.ModelWithMetadata;
+import com.amplifyframework.datastore.storage.sqlite.migrations.MigrationConfiguration;
 import com.amplifyframework.hub.HubChannel;
 import com.amplifyframework.hub.HubEvent;
 import com.amplifyframework.testmodels.personcar.AmplifyCliGeneratedModelProvider;
@@ -112,6 +113,8 @@ public final class ConflictResolverIntegrationTest {
         JSONObject dataStorePluginJson = new JSONObject()
                 .put("syncIntervalInMinutes", 60);
         AWSDataStorePlugin awsDataStorePlugin = AWSDataStorePlugin.builder()
+                .databaseVersion(1)
+                .migrationConfiguration(new MigrationConfiguration.Builder().build())
                 .modelProvider(modelProvider)
                 .apiCategory(mockApiCategory)
                 .dataStoreConfiguration(DataStoreConfiguration.builder()

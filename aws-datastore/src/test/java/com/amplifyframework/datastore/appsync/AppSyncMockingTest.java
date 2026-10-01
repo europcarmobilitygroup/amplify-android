@@ -276,6 +276,7 @@ public final class AppSyncMockingTest {
         Completable
             .create(subscriber -> appSync.onCreate(
                 schema,
+                QueryPredicates.all(),
                 subscriptionToken -> subscriber.onComplete(),
                 NoOpConsumer.create(),
                 NoOpConsumer.create(),
@@ -297,6 +298,7 @@ public final class AppSyncMockingTest {
         Completable
             .create(subscriber -> appSync.onUpdate(
                 schema,
+                QueryPredicates.all(),
                 subscriptionToken -> subscriber.onComplete(),
                 NoOpConsumer.create(),
                 NoOpConsumer.create(),
@@ -318,6 +320,7 @@ public final class AppSyncMockingTest {
         Completable
             .create(subscriber -> appSync.onDelete(
                 schema,
+                QueryPredicates.all(),
                 subscriptionToken -> subscriber.onComplete(),
                 NoOpConsumer.create(),
                 NoOpConsumer.create(),

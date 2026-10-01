@@ -24,6 +24,7 @@ import com.amplifyframework.core.NoOpConsumer;
 import com.amplifyframework.core.model.Model;
 import com.amplifyframework.core.model.query.predicate.QueryPredicates;
 import com.amplifyframework.datastore.DataStoreChannelEventName;
+import com.amplifyframework.datastore.DataStoreException;
 import com.amplifyframework.datastore.appsync.ModelMetadata;
 import com.amplifyframework.datastore.appsync.ModelWithMetadata;
 import com.amplifyframework.datastore.storage.LocalStorageAdapter;
@@ -98,18 +99,33 @@ final class Merger {
                 // *still* won't merge it. Instead, the MutationProcessor would publish the current content,
                 // and the version would get bumped up.
                 .filter(currentVersion -> currentVersion == -1 || incomingVersion > currentVersion)
-                // If we should merge, then do so now, starting with the model data.
-                .flatMapCompletable(shouldMerge -> {
-                    Completable firstStep;
-                    if (mutationOutbox.hasPendingMutation(model.getId(), model.getModelName())) {
-                        LOG.info("Mutation outbox has pending mutation for " + model.getId()
-                            + ". Saving the metadata, but not model itself.");
-                        firstStep = Completable.complete();
-                    } else {
-                        firstStep = (isDelete ? delete(model, changeTypeConsumer) : save(model, changeTypeConsumer));
+                // If we should merge, then do so now. Checking the outbox and writing the model + metadata
+                // happen in ONE exclusive section of the storage adapter. A DataStore API save writes its row
+                // and enqueues its pending mutation under the same lock, so either:
+                //  - the local save happened first: we see its pending mutation and keep the local row; or
+                //  - we write first: the local save then overwrites our row and enqueues after us.
+                // It can no longer happen that we see "no pending mutation" and then overwrite a newer local row.
+                // Nothing in here waits on another thread; observers are notified after the lock is released.
+                .flatMapCompletable(currentVersion -> Completable.fromAction(() -> {
+                    AtomicReference<StorageItemChange.Type> changeType = new AtomicReference<>();
+                    localStorageAdapter.writeExclusively(() -> {
+                        if (mutationOutbox.hasPendingMutation(model.getId(), model.getModelName())) {
+                            LOG.info("Mutation outbox has pending mutation for " + model.getId()
+                                + ". Saving the metadata, but not model itself.");
+                        } else if (isDelete) {
+                            changeType.set(deleteModel(model));
+                        } else {
+                            changeType.set(localStorageAdapter.saveInternal(
+                                model, StorageItemChange.Initiator.SYNC_ENGINE, QueryPredicates.all()).type());
+                        }
+                        localStorageAdapter.saveInternal(
+                            metadata, StorageItemChange.Initiator.SYNC_ENGINE, QueryPredicates.all());
+                    });
+                    // Outside of the lock.
+                    if (changeType.get() != null) {
+                        changeTypeConsumer.accept(changeType.get());
                     }
-                    return firstStep.andThen(save(metadata, NoOpConsumer.create()));
-                })
+                }))
                 // Let the world know that we've done a good thing.
                 .doOnComplete(() -> {
                     announceSuccessfulMerge(modelWithMetadata);
@@ -146,36 +162,17 @@ final class Merger {
         );
     }
 
-    // Delete a model.
-    private <T extends Model> Completable delete(T model, Consumer<StorageItemChange.Type> changeTypeConsumer) {
-        return Completable.create(emitter ->
-            localStorageAdapter.delete(model, StorageItemChange.Initiator.SYNC_ENGINE, QueryPredicates.all(),
-                storageItemChange -> {
-                    changeTypeConsumer.accept(storageItemChange.type());
-                    emitter.onComplete();
-                },
-                failure -> {
-                    LOG.verbose(
-                        "Failed to delete a model while merging. Perhaps it was already gone? "
-                        + android.util.Log.getStackTraceString(failure)
-                    );
-                    changeTypeConsumer.accept(StorageItemChange.Type.DELETE);
-                    emitter.onComplete();
-                }
-            )
-        );
-    }
-
-    // Create or update a model.
-    private <T extends Model> Completable save(T model, Consumer<StorageItemChange.Type> changeTypeConsumer) {
-        return Completable.create(emitter ->
-            localStorageAdapter.save(model, StorageItemChange.Initiator.SYNC_ENGINE, QueryPredicates.all(),
-                storageItemChange -> {
-                    changeTypeConsumer.accept(storageItemChange.type());
-                    emitter.onComplete();
-                },
-                emitter::onError
-            )
-        );
+    // Delete a model, synchronously. Must be called inside localStorageAdapter.writeExclusively(...).
+    private <T extends Model> StorageItemChange.Type deleteModel(T model) {
+        try {
+            return localStorageAdapter.deleteInternal(
+                model, StorageItemChange.Initiator.SYNC_ENGINE, QueryPredicates.all()).type();
+        } catch (DataStoreException failure) {
+            LOG.verbose(
+                "Failed to delete a model while merging. Perhaps it was already gone? "
+                + android.util.Log.getStackTraceString(failure)
+            );
+            return StorageItemChange.Type.DELETE;
+        }
     }
 }
