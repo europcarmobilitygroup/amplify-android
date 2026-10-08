@@ -26,13 +26,9 @@
 ",
   "variables": {
     "filter": {
-        "and": [
-            {
                 "id": {
                     "eq" : "426f8e8d-ea0f-4839-a73f-6a2a38565ba1"
                 }
             }
-        ]
-    }
   }
 }

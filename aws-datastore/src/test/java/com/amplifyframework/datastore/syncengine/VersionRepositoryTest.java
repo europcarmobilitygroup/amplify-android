@@ -82,7 +82,8 @@ public final class VersionRepositoryTest {
                 return false;
             }
             String expectedMessage =
-                String.format(Locale.US, "Wanted 1 metadata for item with id = %s, but had 0.", blogOwner.getId());
+                String.format(Locale.US, "Wanted 1 metadata for item with id = %s for model = %s , but had 0.",
+                    blogOwner.getId(), blogOwner.getModelName());
             return expectedMessage.equals(error.getMessage());
         });
     }

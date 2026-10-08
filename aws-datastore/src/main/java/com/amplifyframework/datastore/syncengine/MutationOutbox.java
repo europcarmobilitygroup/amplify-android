@@ -74,6 +74,17 @@ interface MutationOutbox {
     <T extends Model> Completable enqueue(@NonNull PendingMutation<T> incomingMutation);
 
     /**
+     * Enqueues a mutation on the calling thread. Used by the storage adapter's local change interceptor,
+     * which runs while the storage write lock is held: the local write and its pending mutation must become
+     * visible atomically. Completes synchronously; never waits on another thread.
+     * @param incomingMutation A mutation to enqueue
+     * @param <T> Type of model
+     * @throws DataStoreException If the mutation cannot be enqueued
+     */
+    <T extends Model> void enqueueSynchronously(@NonNull PendingMutation<T> incomingMutation)
+            throws DataStoreException;
+
+    /**
      * Remove an item from the outbox. The {@link SyncProcessor} calls this after it successfully
      * publishes an update over the network.
      * @param pendingMutationId ID of a mutation that has been processed, and can be removed from the outbox

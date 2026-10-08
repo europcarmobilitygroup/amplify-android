@@ -20,6 +20,7 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.core.util.ObjectsCompat;
 
@@ -70,6 +71,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.disposables.CompositeDisposable;
@@ -115,6 +117,27 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
 
     // Used to publish events to the observables subscribed.
     private final Subject<StorageItemChange<? extends Model>> itemChangeSubject;
+
+    // Serializes every local write, together with the outbox bookkeeping attached to it (see
+    // LocalChangeInterceptor), against the sync engine's check-then-write in the Merger.
+    // Rules that keep this lock deadlock-free:
+    //  - it is only held around synchronous SQLite work and in-memory outbox updates;
+    //  - nothing inside it waits on an executor, a latch or a blocking Rx call;
+    //  - no observer or caller callback runs while it is held (changes are published after unlock).
+    // Reads never take it. Fair, so a burst of sync-engine merges cannot starve DataStore API writes.
+    private final ReentrantLock writeLock = new ReentrantLock(true);
+
+    // Changes produced while the current thread holds writeLock; published once the outermost hold is released.
+    private final ThreadLocal<List<StorageItemChange<? extends Model>>> deferredChanges =
+        new ThreadLocal<List<StorageItemChange<? extends Model>>>() {
+            @Override
+            protected List<StorageItemChange<? extends Model>> initialValue() {
+                return new ArrayList<>();
+            }
+        };
+
+    // Invoked, under writeLock, for every change initiated by the DataStore API.
+    private volatile LocalChangeInterceptor localChangeInterceptor;
 
     // Represents a connection to the SQLite database. This database reference
     // can be used to do all SQL operations against the underlying database
@@ -310,6 +333,7 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
         Objects.requireNonNull(initiator);
         Objects.requireNonNull(predicate);
 
+        lockWrites();
         try {
             final ModelSchema modelSchema = schemaRegistry.getModelSchemaForModelClass(item.getModelName());
 
@@ -356,7 +380,7 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
                     .predicate(predicate)
                     .initiator(initiator)
                     .build();
-            itemChangeSubject.onNext(change);
+            publishAndIntercept(change);
             return change;
         } catch (DataStoreException dataStoreException) {
             throw dataStoreException;
@@ -366,6 +390,72 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
                     "Error in saving the model: " + modelToString,
                     someOtherTypeOfException, "See attached exception for details."
             );
+        } finally {
+            unlockWritesAndPublish();
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void setLocalChangeInterceptor(@Nullable LocalChangeInterceptor interceptor) {
+        this.localChangeInterceptor = interceptor;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void writeExclusively(@NonNull ExclusiveWrite write) throws DataStoreException {
+        Objects.requireNonNull(write);
+        lockWrites();
+        try {
+            write.run();
+        } finally {
+            unlockWritesAndPublish();
+        }
+    }
+
+    private void lockWrites() {
+        writeLock.lock();
+    }
+
+    /**
+     * Releases one hold of the write lock. When the outermost hold is released, publishes the changes
+     * that were produced while the lock was held -- outside of the lock, so observers can never run
+     * while this thread holds it.
+     */
+    private void unlockWritesAndPublish() {
+        List<StorageItemChange<? extends Model>> toPublish = Collections.emptyList();
+        if (writeLock.getHoldCount() == 1) {
+            List<StorageItemChange<? extends Model>> deferred = deferredChanges.get();
+            if (!deferred.isEmpty()) {
+                toPublish = new ArrayList<>(deferred);
+                deferred.clear();
+            }
+        }
+        writeLock.unlock();
+        for (StorageItemChange<? extends Model> change : toPublish) {
+            itemChangeSubject.onNext(change);
+        }
+    }
+
+    /**
+     * Records a change for publication (deferred until the write lock is released), then, for changes
+     * initiated by the DataStore API, hands it to the local change interceptor while the lock is still held.
+     */
+    private void publishAndIntercept(StorageItemChange<? extends Model> change) throws DataStoreException {
+        if (writeLock.isHeldByCurrentThread()) {
+            deferredChanges.get().add(change);
+        } else {
+            itemChangeSubject.onNext(change);
+        }
+        if (StorageItemChange.Initiator.DATA_STORE_API.equals(change.initiator())) {
+            LocalChangeInterceptor interceptor = localChangeInterceptor;
+            if (interceptor != null) {
+                interceptor.onLocalChange(change);
+            }
         }
     }
 
@@ -488,73 +578,98 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
         Objects.requireNonNull(onError);
 
         getThreadPool(initiator).submit(() -> {
+            final StorageItemChange<T> change;
             try {
-                final String modelName = item.getModelName();
-                final ModelSchema modelSchema = schemaRegistry.getModelSchemaForModelClass(modelName);
-
-                // Check if data being deleted exists; "Succeed" deletion in that case.
-                if (!sqlQueryProcessor.modelExists(item, QueryPredicates.all())) {
-                    LOG.verbose(modelName + " model with id = " + item.getId() + " does not exist.");
-                    // Pass back item change instance without publishing it.
-                    onSuccess.accept(StorageItemChange.<T>builder()
-                        .item(item)
-                        .patchItem(SerializedModel.create(item, modelSchema))
-                        .modelSchema(modelSchema)
-                        .type(StorageItemChange.Type.DELETE)
-                        .predicate(predicate)
-                        .initiator(initiator)
-                        .build());
-                    return;
-                }
-
-                // Check if existing data meets the condition, only if a condition other than all() was provided.
-                if (!QueryPredicates.all().equals(predicate) && !sqlQueryProcessor.modelExists(item, predicate)) {
-                    throw new DataStoreException(
-                        "Deletion failed because condition did not match existing model instance.",
-                        "The deletion will continue to fail until the model instance is updated."
-                    );
-                }
-
-                // identify items affected by cascading delete before deleting them
-                List<Model> cascadedModels = sqliteModelTree.descendantsOf(Collections.singleton(item));
-
-                // execute local deletion
-                writeData(item, StorageItemChange.Type.DELETE);
-
-                // publish cascaded deletions
-                for (Model cascadedModel : cascadedModels) {
-                    ModelSchema schema = schemaRegistry.getModelSchemaForModelClass(cascadedModel.getModelName());
-                    itemChangeSubject.onNext(StorageItemChange.builder()
-                        .item(cascadedModel)
-                        .patchItem(SerializedModel.create(cascadedModel, schema))
-                        .modelSchema(schema)
-                        .type(StorageItemChange.Type.DELETE)
-                        .predicate(QueryPredicates.all())
-                        .initiator(initiator)
-                        .build());
-                }
-
-                // publish successful deletion of top-level item
-                StorageItemChange<T> change = StorageItemChange.<T>builder()
-                        .item(item)
-                        .patchItem(SerializedModel.create(item, modelSchema))
-                        .modelSchema(modelSchema)
-                        .type(StorageItemChange.Type.DELETE)
-                        .predicate(predicate)
-                        .initiator(initiator)
-                        .build();
-                itemChangeSubject.onNext(change);
-                onSuccess.accept(change);
+                change = deleteInternal(item, initiator, predicate);
             } catch (DataStoreException dataStoreException) {
                 onError.accept(dataStoreException);
-            } catch (Exception someOtherTypeOfException) {
-                DataStoreException dataStoreException = new DataStoreException(
-                    "Error in deleting the model.", someOtherTypeOfException,
-                    "See attached exception for details."
-                );
-                onError.accept(dataStoreException);
+                return;
             }
+            // Callback runs after the write lock has been released.
+            onSuccess.accept(change);
         });
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public <T extends Model> StorageItemChange<T> deleteInternal(
+            @NonNull T item,
+            @NonNull StorageItemChange.Initiator initiator,
+            @NonNull QueryPredicate predicate
+    ) throws DataStoreException {
+        Objects.requireNonNull(item);
+        Objects.requireNonNull(initiator);
+        Objects.requireNonNull(predicate);
+
+        lockWrites();
+        try {
+            final String modelName = item.getModelName();
+            final ModelSchema modelSchema = schemaRegistry.getModelSchemaForModelClass(modelName);
+
+            // Check if data being deleted exists; "Succeed" deletion in that case.
+            if (!sqlQueryProcessor.modelExists(item, QueryPredicates.all())) {
+                LOG.verbose(modelName + " model with id = " + item.getId() + " does not exist.");
+                // Pass back item change instance without publishing it.
+                return StorageItemChange.<T>builder()
+                    .item(item)
+                    .patchItem(SerializedModel.create(item, modelSchema))
+                    .modelSchema(modelSchema)
+                    .type(StorageItemChange.Type.DELETE)
+                    .predicate(predicate)
+                    .initiator(initiator)
+                    .build();
+            }
+
+            // Check if existing data meets the condition, only if a condition other than all() was provided.
+            if (!QueryPredicates.all().equals(predicate) && !sqlQueryProcessor.modelExists(item, predicate)) {
+                throw new DataStoreException(
+                    "Deletion failed because condition did not match existing model instance.",
+                    "The deletion will continue to fail until the model instance is updated."
+                );
+            }
+
+            // identify items affected by cascading delete before deleting them
+            List<Model> cascadedModels = sqliteModelTree.descendantsOf(Collections.singleton(item));
+
+            // execute local deletion
+            writeData(item, StorageItemChange.Type.DELETE);
+
+            // publish cascaded deletions
+            for (Model cascadedModel : cascadedModels) {
+                ModelSchema schema = schemaRegistry.getModelSchemaForModelClass(cascadedModel.getModelName());
+                publishAndIntercept(StorageItemChange.builder()
+                    .item(cascadedModel)
+                    .patchItem(SerializedModel.create(cascadedModel, schema))
+                    .modelSchema(schema)
+                    .type(StorageItemChange.Type.DELETE)
+                    .predicate(QueryPredicates.all())
+                    .initiator(initiator)
+                    .build());
+            }
+
+            // publish successful deletion of top-level item
+            StorageItemChange<T> change = StorageItemChange.<T>builder()
+                    .item(item)
+                    .patchItem(SerializedModel.create(item, modelSchema))
+                    .modelSchema(modelSchema)
+                    .type(StorageItemChange.Type.DELETE)
+                    .predicate(predicate)
+                    .initiator(initiator)
+                    .build();
+            publishAndIntercept(change);
+            return change;
+        } catch (DataStoreException dataStoreException) {
+            throw dataStoreException;
+        } catch (Exception someOtherTypeOfException) {
+            throw new DataStoreException(
+                "Error in deleting the model.", someOtherTypeOfException,
+                "See attached exception for details."
+            );
+        } finally {
+            unlockWritesAndPublish();
+        }
     }
 
     /**
@@ -575,6 +690,24 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
         Objects.requireNonNull(onError);
 
         getThreadPool(initiator).submit(() -> {
+            try {
+                deleteMatchingInternal(itemClass, initiator, predicate);
+            } catch (DataStoreException dataStoreException) {
+                onError.accept(dataStoreException);
+                return;
+            }
+            // Callback runs after the write lock has been released.
+            onSuccess.call();
+        });
+    }
+
+    private <T extends Model> void deleteMatchingInternal(
+            @NonNull Class<T> itemClass,
+            @NonNull StorageItemChange.Initiator initiator,
+            @NonNull QueryPredicate predicate
+    ) throws DataStoreException {
+        lockWrites();
+        try {
             final ModelSchema modelSchema = schemaRegistry.getModelSchemaForModelClass(itemClass);
             QueryOptions options = Where.matches(predicate);
             try (Cursor cursor = sqlCommandProcessor.rawQuery(sqlCommandFactory.queryFor(modelSchema, options))) {
@@ -604,7 +737,7 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
                 // publish every deletion
                 for (Model model : modelsToDelete) {
                     ModelSchema schema = schemaRegistry.getModelSchemaForModelClass(model.getModelName());
-                    itemChangeSubject.onNext(StorageItemChange.builder()
+                    publishAndIntercept(StorageItemChange.builder()
                             .item(model)
                             .patchItem(SerializedModel.create(model, schema))
                             .modelSchema(schema)
@@ -613,17 +746,17 @@ public final class SQLiteStorageAdapter implements LocalStorageAdapter {
                             .initiator(initiator)
                             .build());
                 }
-                onSuccess.call();
-            } catch (DataStoreException dataStoreException) {
-                onError.accept(dataStoreException);
-            } catch (Exception someOtherTypeOfException) {
-                DataStoreException dataStoreException = new DataStoreException(
-                        "Error in deleting models.", someOtherTypeOfException,
-                        "See attached exception for details."
-                );
-                onError.accept(dataStoreException);
             }
-        });
+        } catch (DataStoreException dataStoreException) {
+            throw dataStoreException;
+        } catch (Exception someOtherTypeOfException) {
+            throw new DataStoreException(
+                    "Error in deleting models.", someOtherTypeOfException,
+                    "See attached exception for details."
+            );
+        } finally {
+            unlockWritesAndPublish();
+        }
     }
 
     /**

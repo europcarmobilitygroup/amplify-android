@@ -51,10 +51,20 @@ final class StorageObserver {
     }
 
     /**
-     * When a change is observed on the storage adapter, and that change wasn't caused
-     * by the sync engine, then place that change into the mutation outbox.
+     * Start enqueuing local changes (those not caused by the sync engine) into the mutation outbox.
+     *
+     * The enqueue happens synchronously inside the storage adapter, while it still holds its write lock,
+     * via a {@link LocalStorageAdapter.LocalChangeInterceptor}. The new row and its pending mutation therefore
+     * become visible atomically, which the {@link Merger} relies on: it checks for a pending mutation and
+     * writes the remote model under the same lock. (Previously the enqueue ran later, in an observer of the
+     * storage change, which left a window where the row was updated but no mutation was pending yet.)
+     *
+     * The storage observation below is kept only to detect the adapter's termination.
      */
     void startObservingStorageChanges(Action onStarted, Action onStopped) {
+        localStorageAdapter.setLocalChangeInterceptor(
+            change -> mutationOutbox.enqueueSynchronously(toPendingMutation(change))
+        );
         ongoingOperationsDisposable.add(
             Observable.<StorageItemChange<? extends Model>>create(emitter -> {
                 localStorageAdapter.observe(emitter::onNext, emitter::onError, emitter::onComplete);
@@ -63,19 +73,16 @@ final class StorageObserver {
             .doOnSubscribe(disposable ->
                 LOG.info("Now observing local storage. Local changes will be enqueued to mutation outbox.")
             )
-            .filter(possiblyCyclicChange -> {
-                // Don't continue if the storage change was caused by the sync engine itself
-                return !StorageItemChange.Initiator.SYNC_ENGINE.equals(possiblyCyclicChange.initiator());
-            })
-            .map(this::toPendingMutation)
-            .flatMapCompletable(mutationOutbox::enqueue)
+            .ignoreElements()
             .subscribe(
                 () -> {
                     LOG.warn("Storage adapter subscription terminated with completion.");
+                    localStorageAdapter.setLocalChangeInterceptor(null);
                     onStopped.call();
                 },
                 error -> {
                     LOG.error("Storage adapter subscription ended in error", error);
+                    localStorageAdapter.setLocalChangeInterceptor(null);
                     onStopped.call();
                 }
             )
@@ -99,6 +106,7 @@ final class StorageObserver {
      * Stop observing changes in the storage adapter.
      */
     void stopObservingStorageChanges() {
+        localStorageAdapter.setLocalChangeInterceptor(null);
         ongoingOperationsDisposable.clear();
     }
 }

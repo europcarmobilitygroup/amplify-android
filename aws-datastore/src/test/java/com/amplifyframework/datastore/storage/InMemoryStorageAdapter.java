@@ -17,6 +17,7 @@ package com.amplifyframework.datastore.storage;
 
 import android.content.Context;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.amplifyframework.AmplifyException;
 import com.amplifyframework.core.Action;
@@ -35,6 +36,7 @@ import com.amplifyframework.datastore.DataStoreQuerySnapshot;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 
 import io.reactivex.rxjava3.disposables.Disposable;
 import io.reactivex.rxjava3.subjects.PublishSubject;
@@ -43,19 +45,25 @@ import io.reactivex.rxjava3.subjects.Subject;
 /**
  * A simple in-memory implementation of the LocalStorageAdapter
  * contract. This intended for use as a stub in test code.
+ * Like the SQLite adapter, it serializes writes with a lock, supports
+ * {@link #writeExclusively(ExclusiveWrite)}, and hands DataStore API changes to the
+ * {@link LocalChangeInterceptor} (which is how the sync engine enqueues local changes).
  */
 public final class InMemoryStorageAdapter implements LocalStorageAdapter {
     private final List<Model> items;
     private final Subject<StorageItemChange<? extends Model>> itemChangeStream;
+    private final ReentrantLock writeLock;
+    private volatile LocalChangeInterceptor localChangeInterceptor;
 
     private InMemoryStorageAdapter() {
         this.items = new ArrayList<>();
         this.itemChangeStream = PublishSubject.<StorageItemChange<? extends Model>>create().toSerialized();
+        this.writeLock = new ReentrantLock(true);
     }
 
     /**
-     * Creates an instance of the InMemoryStorageAdapter.
-     * @return Instance of InMemoryStorageAdapter.
+     * Creates an instance of an in-memory storage adapter.
+     * @return An in-memory storage adapter
      */
     public static InMemoryStorageAdapter create() {
         return new InMemoryStorageAdapter();
@@ -76,61 +84,83 @@ public final class InMemoryStorageAdapter implements LocalStorageAdapter {
             @NonNull final QueryPredicate predicate,
             @NonNull final Consumer<StorageItemChange<T>> onSuccess,
             @NonNull final Consumer<DataStoreException> onError) {
-        StorageItemChange.Type type = StorageItemChange.Type.CREATE;
-        final int index = indexOf(item);
-        Model savedItem = null;
-        if (index > -1) {
-            // There is an existing record with that ID; this is an update.
-            type = StorageItemChange.Type.UPDATE;
-            savedItem = items.get(index);
-
-            if (!predicate.evaluate(savedItem)) {
-                onError.accept(new DataStoreException(
-                    "Conditional check failed.",
-                    "Verify that there is a saved model that matches the provided predicate."));
-                return;
-            } else {
-                items.remove(index);
-            }
-        }
-        final ModelSchema schema;
-        final SerializedModel patchItem;
+        final StorageItemChange<T> change;
         try {
-            schema = ModelSchema.fromModelClass(item.getClass());
-            patchItem = SerializedModel.difference(item, savedItem, schema);
-        } catch (AmplifyException schemaBuildFailure) {
-            onError.accept(new DataStoreException(
-                "Failed to build model schema.", schemaBuildFailure, "Verify your model."
-            ));
+            change = saveInternal(item, initiator, predicate);
+        } catch (DataStoreException failure) {
+            onError.accept(failure);
             return;
         }
-        items.add(item);
-        StorageItemChange<T> change = StorageItemChange.<T>builder()
-            .item(item)
-            .patchItem(patchItem)
-            .modelSchema(schema)
-            .type(type)
-            .predicate(predicate)
-            .initiator(initiator)
-            .build();
-        itemChangeStream.onNext(change);
         onSuccess.accept(change);
+    }
+
+    @Override
+    public <T extends Model> StorageItemChange<T> saveInternal(
+            @NonNull final T item,
+            @NonNull final StorageItemChange.Initiator initiator,
+            @NonNull final QueryPredicate predicate) throws DataStoreException {
+        writeLock.lock();
+        try {
+            StorageItemChange.Type type = StorageItemChange.Type.CREATE;
+            final int index = indexOf(item);
+            Model savedItem = null;
+            if (index > -1) {
+                // There is an existing record with that ID; this is an update.
+                type = StorageItemChange.Type.UPDATE;
+                savedItem = items.get(index);
+                if (!predicate.evaluate(savedItem)) {
+                    throw new DataStoreException(
+                        "Conditional check failed.",
+                        "Verify that there is a saved model that matches the provided predicate.");
+                }
+                items.remove(index);
+            }
+            final ModelSchema schema;
+            final SerializedModel patchItem;
+            try {
+                schema = ModelSchema.fromModelClass(item.getClass());
+                patchItem = SerializedModel.difference(item, savedItem, schema);
+            } catch (AmplifyException schemaBuildFailure) {
+                throw new DataStoreException(
+                    "Failed to build model schema.", schemaBuildFailure, "Verify your model."
+                );
+            }
+            items.add(item);
+            StorageItemChange<T> change = StorageItemChange.<T>builder()
+                .item(item)
+                .patchItem(patchItem)
+                .modelSchema(schema)
+                .type(type)
+                .predicate(predicate)
+                .initiator(initiator)
+                .build();
+            publishAndIntercept(change);
+            return change;
+        } finally {
+            writeLock.unlock();
+        }
     }
 
     @SuppressWarnings("unchecked") // (T) item *is* checked, via isAssignableFrom().
     @Override
     public <T extends Model> void query(
             @NonNull final Class<T> itemClass,
+            @NonNull final StorageItemChange.Initiator initiator,
             @NonNull final QueryOptions options,
             @NonNull final Consumer<Iterator<T>> onSuccess,
             @NonNull final Consumer<DataStoreException> onError
     ) {
         final List<T> result = new ArrayList<>();
         final QueryPredicate predicate = options.getQueryPredicate();
-        for (Model item : items) {
-            if (itemClass.isAssignableFrom(item.getClass()) && predicate.evaluate(item)) {
-                result.add((T) item);
+        writeLock.lock();
+        try {
+            for (Model item : items) {
+                if (itemClass.isAssignableFrom(item.getClass()) && predicate.evaluate(item)) {
+                    result.add((T) item);
+                }
             }
+        } finally {
+            writeLock.unlock();
         }
         onSuccess.accept(result.iterator());
     }
@@ -138,20 +168,25 @@ public final class InMemoryStorageAdapter implements LocalStorageAdapter {
     @Override
     public void query(
             @NonNull String modelName,
+            @NonNull StorageItemChange.Initiator initiator,
             @NonNull QueryOptions options,
             @NonNull Consumer<Iterator<? extends Model>> onSuccess,
             @NonNull Consumer<DataStoreException> onError) {
         final List<Model> result = new ArrayList<>();
         final QueryPredicate predicate = options.getQueryPredicate();
-        for (Model item : items) {
-            if (modelName.equals(item.getClass().getSimpleName()) && predicate.evaluate(item)) {
-                result.add(item); //TODO, add tests for new query method.
+        writeLock.lock();
+        try {
+            for (Model item : items) {
+                if (modelName.equals(item.getClass().getSimpleName()) && predicate.evaluate(item)) {
+                    result.add(item); //TODO, add tests for new query method.
+                }
             }
+        } finally {
+            writeLock.unlock();
         }
         onSuccess.accept(result.iterator());
     }
 
-    @SuppressWarnings("unchecked") // item.getClass() -> Class<?>, but type is T. So cast as Class<T> is OK.
     @Override
     public <T extends Model> void delete(
             @NonNull final T item,
@@ -160,43 +195,62 @@ public final class InMemoryStorageAdapter implements LocalStorageAdapter {
             @NonNull final Consumer<StorageItemChange<T>> onSuccess,
             @NonNull final Consumer<DataStoreException> onError
     ) {
-        final int index = indexOf(item);
-        if (index < 0) {
-            onError.accept(new DataStoreException(
+        final StorageItemChange<T> deletion;
+        try {
+            deletion = deleteInternal(item, initiator, predicate);
+        } catch (DataStoreException failure) {
+            onError.accept(failure);
+            return;
+        }
+        onSuccess.accept(deletion);
+    }
+
+    @SuppressWarnings("unchecked") // item.getClass() -> Class<?>, but type is T. So cast as Class<T> is OK.
+    @Override
+    public <T extends Model> StorageItemChange<T> deleteInternal(
+            @NonNull final T item,
+            @NonNull final StorageItemChange.Initiator initiator,
+            @NonNull final QueryPredicate predicate
+    ) throws DataStoreException {
+        writeLock.lock();
+        try {
+            final int index = indexOf(item);
+            if (index < 0) {
+                throw new DataStoreException(
                     "This item was not found in the datastore: " + item.toString(),
                     "Use save() function to create models to store."
-            ));
-            return;
-        }
-        Model savedItem = items.remove(index);
-
-        final ModelSchema schema;
-        final SerializedModel patchItem;
-        try {
-            schema = ModelSchema.fromModelClass(item.getClass());
-            patchItem = SerializedModel.create(savedItem, schema);
-        } catch (AmplifyException schemaBuildFailure) {
-            onError.accept(new DataStoreException(
-                "Failed to build model schema.", schemaBuildFailure, "Verify your model."
-            ));
-            return;
-        }
-        if (!predicate.evaluate(savedItem)) {
-            onError.accept(new DataStoreException(
+                );
+            }
+            Model savedItem = items.get(index);
+            if (!predicate.evaluate(savedItem)) {
+                throw new DataStoreException(
                     "Conditional check failed.",
-                    "Verify that there is a saved model that matches the provided predicate."));
-            return;
+                    "Verify that there is a saved model that matches the provided predicate.");
+            }
+            final ModelSchema schema;
+            final SerializedModel patchItem;
+            try {
+                schema = ModelSchema.fromModelClass(item.getClass());
+                patchItem = SerializedModel.create(savedItem, schema);
+            } catch (AmplifyException schemaBuildFailure) {
+                throw new DataStoreException(
+                    "Failed to build model schema.", schemaBuildFailure, "Verify your model."
+                );
+            }
+            items.remove(index);
+            StorageItemChange<T> deletion = StorageItemChange.<T>builder()
+                .item((T) savedItem)
+                .patchItem(patchItem)
+                .modelSchema(schema)
+                .type(StorageItemChange.Type.DELETE)
+                .predicate(predicate)
+                .initiator(initiator)
+                .build();
+            publishAndIntercept(deletion);
+            return deletion;
+        } finally {
+            writeLock.unlock();
         }
-        StorageItemChange<T> deletion = StorageItemChange.<T>builder()
-            .item((T) savedItem)
-            .patchItem(patchItem)
-            .modelSchema(schema)
-            .type(StorageItemChange.Type.DELETE)
-            .predicate(predicate)
-            .initiator(initiator)
-            .build();
-        itemChangeStream.onNext(deletion);
-        onSuccess.accept(deletion);
     }
 
     @SuppressWarnings("unchecked") // item.getClass() -> Class<?>, but type is T. So cast as Class<T> is OK.
@@ -218,22 +272,47 @@ public final class InMemoryStorageAdapter implements LocalStorageAdapter {
             return;
         }
 
-        for (Model savedItem : items) {
-            if (!itemClass.isInstance(savedItem) || !predicate.evaluate(savedItem)) {
-                continue;
-            }
-            items.remove(savedItem);
+        writeLock.lock();
+        try {
+            Iterator<Model> iterator = items.iterator();
+            while (iterator.hasNext()) {
+                Model savedItem = iterator.next();
+                if (!itemClass.isInstance(savedItem) || !predicate.evaluate(savedItem)) {
+                    continue;
+                }
+                iterator.remove();
 
-            StorageItemChange<T> deletion = StorageItemChange.<T>builder()
-                    .item((T) savedItem)
-                    .modelSchema(schema)
-                    .type(StorageItemChange.Type.DELETE)
-                    .predicate(predicate)
-                    .initiator(initiator)
-                    .build();
-            itemChangeStream.onNext(deletion);
+                StorageItemChange<T> deletion = StorageItemChange.<T>builder()
+                        .item((T) savedItem)
+                        .modelSchema(schema)
+                        .type(StorageItemChange.Type.DELETE)
+                        .predicate(predicate)
+                        .initiator(initiator)
+                        .build();
+                publishAndIntercept(deletion);
+            }
+        } catch (DataStoreException failure) {
+            onError.accept(failure);
+            return;
+        } finally {
+            writeLock.unlock();
         }
         onSuccess.call();
+    }
+
+    @Override
+    public void setLocalChangeInterceptor(@Nullable LocalChangeInterceptor interceptor) {
+        this.localChangeInterceptor = interceptor;
+    }
+
+    @Override
+    public void writeExclusively(@NonNull ExclusiveWrite write) throws DataStoreException {
+        writeLock.lock();
+        try {
+            write.run();
+        } finally {
+            writeLock.unlock();
+        }
     }
 
     @NonNull
@@ -280,6 +359,18 @@ public final class InMemoryStorageAdapter implements LocalStorageAdapter {
                       @NonNull Consumer<DataStoreException> onError) {
         items.clear();
         onComplete.call();
+    }
+
+    // Emits the change (synchronously, as before) and, for DataStore API changes, hands it to the
+    // local change interceptor while the write lock is still held -- mirroring SQLiteStorageAdapter.
+    private void publishAndIntercept(StorageItemChange<? extends Model> change) throws DataStoreException {
+        itemChangeStream.onNext(change);
+        if (StorageItemChange.Initiator.DATA_STORE_API.equals(change.initiator())) {
+            LocalChangeInterceptor interceptor = localChangeInterceptor;
+            if (interceptor != null) {
+                interceptor.onLocalChange(change);
+            }
+        }
     }
 
     private int indexOf(Model item) {

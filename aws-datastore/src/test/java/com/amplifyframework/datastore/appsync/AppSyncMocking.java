@@ -641,12 +641,13 @@ public final class AppSyncMocking {
          */
         public OnCreateConfigurator callOnStart() {
             doAnswer(invocation -> {
-                final int indexOfOnStart = 1;
+                final int indexOfOnStart = 2;
                 Consumer<String> onStart = invocation.getArgument(indexOfOnStart);
                 onStart.accept(RandomString.string());
                 return null;
             }).when(appSync).onCreate(
                 any(), // Class<M>
+                any(), // QueryPredicate, server-side filter
                 any(), // Consumer<String>, onStart
                 any(), // Consumer<GraphQLResponse<ModelWithMetadata<M>>>, onNextResponse
                 any(), // Consumer<DataStoreException>, onSubscriptionFailure
@@ -675,12 +676,13 @@ public final class AppSyncMocking {
          */
         public OnUpdateConfigurator callOnStart() {
             doAnswer(invocation -> {
-                final int indexOfOnStart = 1;
+                final int indexOfOnStart = 2;
                 Consumer<String> onStart = invocation.getArgument(indexOfOnStart);
                 onStart.accept(RandomString.string());
                 return null;
             }).when(appSync).onUpdate(
                 any(), // Class<T>
+                any(), // QueryPredicate, server-side filter
                 any(), // Consumer<String>, onStart
                 any(), // Consumer<GraphQLResponse<ModelWithMetadata<T>>>, onNextResponse
                 any(), // Consumer<DataStoreException>, onSubscriptionFailure
@@ -708,12 +710,13 @@ public final class AppSyncMocking {
          */
         public OnDeleteConfigurator callOnStart() {
             doAnswer(invocation -> {
-                final int indexOfOnStart = 1;
+                final int indexOfOnStart = 2;
                 Consumer<String> onStart = invocation.getArgument(indexOfOnStart);
                 onStart.accept(RandomString.string());
                 return null;
             }).when(appSync).onDelete(
                 any(), // Class<T>
+                any(), // QueryPredicate, server-side filter
                 any(), // Consumer<String>, onStart
                 any(), // Consumer<GraphQLResponse<ModelWithMetadata<T>>>, onNextResponse
                 any(), // Consumer<DataStoreException>, onSubscriptionFailure

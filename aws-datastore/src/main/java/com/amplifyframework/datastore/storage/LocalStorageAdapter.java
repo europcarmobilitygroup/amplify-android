@@ -17,6 +17,7 @@ package com.amplifyframework.datastore.storage;
 
 import android.content.Context;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.amplifyframework.core.Action;
 import com.amplifyframework.core.Consumer;
@@ -231,4 +232,63 @@ public interface LocalStorageAdapter {
      */
     void clear(@NonNull Action onComplete,
                @NonNull Consumer<DataStoreException> onError);
+
+    /**
+     * Synchronously deletes an item from storage, on the calling thread. Same semantics as
+     * {@link #delete(Model, StorageItemChange.Initiator, QueryPredicate, Consumer, Consumer)}.
+     * @param item Item to delete
+     * @param initiator An identification of the actor who initiated this deletion
+     * @param predicate Conditions that must be met by the existing data
+     * @param <T> The type of the item being deleted
+     * @return The resulting change
+     * @throws DataStoreException On failure to delete the item
+     */
+    <T extends Model> StorageItemChange<T> deleteInternal(
+            @NonNull T item,
+            @NonNull StorageItemChange.Initiator initiator,
+            @NonNull QueryPredicate predicate
+    ) throws DataStoreException;
+
+    /**
+     * Registers a hook that is invoked synchronously for every change initiated by the DataStore API,
+     * while the storage write lock is still held. The sync engine uses it to enqueue the pending mutation
+     * atomically with the local write, so that no one can observe the new row without its pending mutation.
+     * The interceptor must only do synchronous, local work: it must never block on another thread.
+     * @param interceptor The interceptor, or null to remove the current one
+     */
+    void setLocalChangeInterceptor(@Nullable LocalChangeInterceptor interceptor);
+
+    /**
+     * Runs a sequence of synchronous storage operations (e.g. {@link #saveInternal}, {@link #deleteInternal})
+     * exclusively with respect to every other write to this storage adapter. Observers are notified of the
+     * resulting changes only after the exclusive section has completed.
+     * The action must only do synchronous, local work: it must never block on another thread.
+     * @param write The operations to run exclusively
+     * @throws DataStoreException If the action fails
+     */
+    void writeExclusively(@NonNull ExclusiveWrite write) throws DataStoreException;
+
+    /**
+     * Synchronous hook for changes initiated by the DataStore API.
+     * See {@link #setLocalChangeInterceptor(LocalChangeInterceptor)}.
+     */
+    interface LocalChangeInterceptor {
+        /**
+         * Invoked after a local change has been written, before the write lock is released.
+         * @param change The local change
+         * @throws DataStoreException If the change could not be processed
+         */
+        void onLocalChange(@NonNull StorageItemChange<? extends Model> change) throws DataStoreException;
+    }
+
+    /**
+     * A sequence of synchronous storage operations. See {@link #writeExclusively(ExclusiveWrite)}.
+     */
+    interface ExclusiveWrite {
+        /**
+         * Runs the operations.
+         * @throws DataStoreException On failure
+         */
+        void run() throws DataStoreException;
+    }
 }

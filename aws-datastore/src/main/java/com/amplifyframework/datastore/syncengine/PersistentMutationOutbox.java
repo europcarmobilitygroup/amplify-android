@@ -34,12 +34,14 @@ import com.amplifyframework.datastore.storage.StorageItemChange;
 import com.amplifyframework.hub.HubChannel;
 import com.amplifyframework.logging.Logger;
 
-import java.util.HashSet;
+import java.util.Collections;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import io.reactivex.rxjava3.core.Completable;
-import io.reactivex.rxjava3.core.Maybe;
 import io.reactivex.rxjava3.core.Observable;
 import io.reactivex.rxjava3.subjects.PublishSubject;
 import io.reactivex.rxjava3.subjects.Subject;
@@ -70,7 +72,8 @@ final class PersistentMutationOutbox implements MutationOutbox {
                              @NonNull MutationQueue mutationQueue) {
         this.storage = Objects.requireNonNull(localStorageAdapter);
         this.mutationQueue = mutationQueue;
-        this.inFlightMutations = new HashSet<>();
+        // Accessed from the DataStore API thread (enqueue), the mutation processor and the network callbacks.
+        this.inFlightMutations = Collections.newSetFromMap(new ConcurrentHashMap<>());
         this.converter = new GsonPendingMutationConverter();
         this.events = PublishSubject.<OutboxEvent>create().toSerialized();
     }
@@ -99,6 +102,37 @@ final class PersistentMutationOutbox implements MutationOutbox {
                 return resolveConflict(existingMutation, incomingMutation);
             }
         });
+    }
+
+    @Override
+    public <T extends Model> void enqueueSynchronously(@NonNull PendingMutation<T> incomingMutation)
+            throws DataStoreException {
+        Objects.requireNonNull(incomingMutation);
+        AtomicBoolean completed = new AtomicBoolean(false);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        // Every step of enqueue() is synchronous (SQLite on this thread, in-memory queue, async notifications),
+        // so subscribing runs it to completion right here. Never block waiting for it: this runs under the
+        // storage write lock, and waiting on another thread there could deadlock.
+        enqueue(incomingMutation).subscribe(
+            () -> completed.set(true),
+            error -> {
+                failure.set(error);
+                completed.set(true);
+            }
+        );
+        if (!completed.get()) {
+            throw new DataStoreException(
+                "Enqueue of " + incomingMutation + " did not complete synchronously.",
+                "This is a bug: every step of enqueue must run on the calling thread."
+            );
+        }
+        Throwable error = failure.get();
+        if (error instanceof DataStoreException) {
+            throw (DataStoreException) error;
+        } else if (error != null) {
+            throw new DataStoreException("Failed to enqueue " + incomingMutation, error,
+                "See attached exception for details.");
+        }
     }
 
     private <T extends Model> Completable resolveConflict(@NonNull PendingMutation<T> existingMutation,
@@ -144,26 +178,17 @@ final class PersistentMutationOutbox implements MutationOutbox {
                     AmplifyException.REPORT_BUG_TO_AWS_SUGGESTION
                 );
             }
-            return Maybe.<OutboxEvent>create(subscriber -> {
-                storage.delete(
-                    converter.toRecord(pendingMutation),
-                    StorageItemChange.Initiator.SYNC_ENGINE,
-                    QueryPredicates.all(),
-                    ignored -> {
-                        mutationQueue.removeById(pendingMutation.getMutationId());
-                        inFlightMutations.remove(pendingMutationId);
-                        LOG.info("Successfully removed from mutations outbox" + pendingMutation);
-                        final boolean contentAvailable = !mutationQueue.isEmpty();
-                        if (contentAvailable) {
-                            subscriber.onSuccess(OutboxEvent.CONTENT_AVAILABLE);
-                        } else {
-                            subscriber.onComplete();
-                        }
-                    },
-                    subscriber::onError
-                );
-            })
-            .flatMapCompletable(contentAvailable -> notifyContentAvailable());
+            // Synchronous delete on the calling thread (no hop to the sync-engine executor): this also runs
+            // from enqueue(), under the storage write lock, where waiting on another thread could deadlock.
+            storage.deleteInternal(
+                converter.toRecord(pendingMutation),
+                StorageItemChange.Initiator.SYNC_ENGINE,
+                QueryPredicates.all()
+            );
+            mutationQueue.removeById(pendingMutation.getMutationId());
+            inFlightMutations.remove(pendingMutationId);
+            LOG.info("Successfully removed from mutations outbox" + pendingMutation);
+            return mutationQueue.isEmpty() ? Completable.complete() : notifyContentAvailable();
         });
     }
 
